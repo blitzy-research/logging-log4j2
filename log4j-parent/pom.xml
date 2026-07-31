@@ -119,7 +119,6 @@
     <junit-pioneer.version>1.9.1</junit-pioneer.version>
     <kafka.version>3.9.1</kafka.version>
     <lightcouch.version>0.2.0</lightcouch.version>
-    <log4j.version>1.2.17</log4j.version>
     <log4j-transform.version>0.2.0</log4j-transform.version>
     <log4j2-cachefile-transformer.version>2.15.0</log4j2-cachefile-transformer.version>
     <log4j2-ecs-layout.version>1.7.0</log4j2-ecs-layout.version>
@@ -623,12 +622,6 @@
         <version>${lightcouch.version}</version>
       </dependency>
 
-      <dependency>
-        <groupId>log4j</groupId>
-        <artifactId>log4j</artifactId>
-        <version>${log4j.version}</version>
-      </dependency>
-
       <!-- Used for testing `JsonTemplateLayout`: -->
       <dependency>
         <groupId>co.elastic.logging</groupId>
@@ -1024,10 +1017,13 @@
                     <!-- JCL replacements -->
                     <exclude>org.slf4j:jcl-over-slf4j</exclude>
                     <exclude>org.springframework:spring-jcl</exclude>
+                    <!-- Log4j 1.x itself -->
+                    <exclude>log4j:log4j</exclude>
                     <!-- Log4j 1.x replacements -->
                     <exclude>org.slf4j:log4j-over-slf4j</exclude>
                     <exclude>ch.qos.reload4j:reload4j</exclude>
                     <!-- Bridges to Log4j 1.x -->
+                    <exclude>org.apache.logging.log4j:log4j-1.2-api</exclude>
                     <exclude>org.slf4j:slf4j-log4j12</exclude>
                     <exclude>org.slf4j:slf4j-reload4j</exclude>
                     <!-- PAX Logging just to be safe -->

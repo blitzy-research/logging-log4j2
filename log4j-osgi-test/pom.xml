@@ -163,6 +163,8 @@
 
       <!--
         ~ Unban Logback.
+        ~ Unban the Log4j 1.2 API bridge at test scope: this module verifies that the project's own
+        ~ shipped Log4j 1.2 API OSGi bundle resolves and logs.
         -->
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
@@ -175,6 +177,7 @@
                 <bannedDependencies>
                   <includes>
                     <include>ch.qos.logback:*:*:*:test</include>
+                    <include>org.apache.logging.log4j:log4j-1.2-api:*:*:test</include>
                   </includes>
                 </bannedDependencies>
               </rules>
