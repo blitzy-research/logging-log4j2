@@ -55,7 +55,8 @@ class MessageResolverTest {
 
         // Log using legacy Log4j 1 API.
         final String log4j1Message = "Message logged using org.apache.log4j.Category.info(Object)";
-        org.apache.log4j.LogManager.getLogger(MessageResolverTest.class).info(log4j1Message);
+        org.apache.logging.log4j.LogManager.getLogger(MessageResolverTest.class)
+                .info((Message) new SimpleMessage(log4j1Message));
 
         // Log using Log4j 2 API.
         final String log4j2Message = "Message logged using org.apache.logging.log4j.Logger.info(String)";

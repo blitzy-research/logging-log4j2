@@ -1,0 +1,270 @@
+////
+    Licensed to the Apache Software Foundation (ASF) under one or more
+    contributor license agreements.  See the NOTICE file distributed with
+    this work for additional information regarding copyright ownership.
+    The ASF licenses this file to you under the Apache License, Version 2.0
+    (the "License"); you may not use this file except in compliance with
+    the License.  You may obtain a copy of the License at
+
+         http://www.apache.org/licenses/LICENSE-2.0
+
+    Unless required by applicable law or agreed to in writing, software
+    distributed under the License is distributed on an "AS IS" BASIS,
+    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+    See the License for the specific language governing permissions and
+    limitations under the License.
+////
+= Log4j 1.x to Log4j 2 configuration parity corpus (`log4j-core-test`)
+
+This directory is the behaviour-preservation oracle for the Log4j 1.x configuration fixtures that
+were translated in place into the Log4j 2 schema inside `log4j-core-test/src/test/resources`.
+
+Each translated fixture contributes two things:
+
+* a *normalized baseline capture* -- `<fixture>.baseline.txt` -- recording exactly what the Log4j 1.x
+  configuration rendered before the migration, and
+* an *effective-configuration table* in this document, whose Log4j 2 column is populated from
+  status-logger output observed while booting the translated file with `-Dlog4j2.debug`, never from
+  reading the translated XML.
+
+Acceptance for every fixture is an *empty* normalized diff between its baseline capture and the
+output the migrated configuration renders for the same event script. A non-empty diff is a defect in
+the migration; it is never resolved by widening the normalizer or by editing a baseline.
+
+== Normalization
+
+Exactly four tokens are normalized, and nothing else:
+
+[cols="1,1,3",options="header"]
+|===
+| Rendered element | Normalized to | Why
+
+| `%d` timestamp
+| `<TS>`
+| Wall-clock, non-deterministic.
+
+| `%t` thread name
+| `<THREAD>`
+| Pool-assigned, non-deterministic.
+
+| `%L` source line number
+| `<LINE>`
+| A source-layout artefact of the migration itself. Class and method names are *not* normalized.
+  No fixture in this directory uses `%L`, so for this module the rule never fires.
+
+| Absolute filesystem paths
+| `<PATH>`
+| Workspace-dependent.
+|===
+
+Everything outside those four tokens is compared byte for byte: level text *and its padding width*,
+logger-name abbreviation, every literal separator, context-map placeholder rendering, and throwable
+rendering.
+
+== T8 -- `log4j12-perf.xml`
+
+Baseline capture:: `log4j12-perf.baseline.txt`
+
+=== Translation
+
+[cols="2,3",options="header"]
+|===
+| Log4j 1.x source | Log4j 2 target
+
+| `<!DOCTYPE log4j:configuration SYSTEM "log4j.dtd">`
+| removed -- the translated file carries no DOCTYPE
+
+| `<log4j:configuration xmlns:log4j="..." debug="false">`
+| `<Configuration>` -- `debug="false"` is the Log4j 1.x default, so it is dropped rather than
+  rewritten as a `status` attribute; the translation must introduce no diagnostic behaviour the
+  original did not have
+
+| `<appender name="TestLogfile" class="org.apache.log4j.FileAppender">`
+| `<File name="TestLogfile" ...>`
+
+| `<param name="File" value="target/testlog4j.log"/>`
+| `fileName="target/testlog4j.log"`
+
+| `<param name="immediateFlush" value="false"/>`
+| `immediateFlush="false"`
+
+| `<param name="Append" value="false" />`
+| `append="false"`
+
+| `<layout class="org.apache.log4j.PatternLayout">` + `ConversionPattern`
+| `<PatternLayout><Pattern>...</Pattern></PatternLayout>`, pattern text carried across verbatim
+
+| `<appender-ref ref="TestLogfile"/>`
+| `<AppenderRef ref="TestLogfile"/>`
+
+| `<root><level value="debug"/></root>`
+| `<Root level="debug">`
+|===
+
+=== Effective configuration
+
+Both columns are *observed*. The Log4j 1.x column comes from booting the original fixture with the
+`log4j-1.2-api` bridge on the classpath and `-Dlog4j.configuration=log4j12-perf.xml`; the Log4j 2
+column comes from booting the translated fixture with only `log4j-api` and `log4j-core` on the
+classpath and `-Dlog4j.configurationFile=log4j12-perf.xml`. Both runs set `-Dlog4j2.debug`.
+
+[cols="1,2,2,1",options="header"]
+|===
+| Property | Observed, Log4j 1.x | Observed, Log4j 2 | Match
+
+| Logger
+| root -- `Adding appender named [TestLogfile] to loggerConfig []`
+| root -- `LoggerConfig$RootLogger$Builder(...)`, the only logger built
+| yes
+
+| Level
+| `Level value for root is [debug]` then `root level set to DEBUG`
+| `LoggerConfig$RootLogger$Builder(... level="DEBUG" ...)`
+| yes
+
+| Additivity
+| `true` -- not declared in the source, and the child-logger event in the script reaches the root
+  appender exactly once
+| `true` -- `additivity="null"` in the builder trace, i.e. unset, so the plugin default applies; the
+  same child-logger event likewise appears exactly once
+| yes
+
+| Appender
+| `TestLogfile` -- `Starting FileManager target/testlog4j.log`
+| `TestLogfile` -- `createAppenderRef(ref="TestLogfile", ...)`, `Starting FileManager
+  target/testlog4j.log`
+| yes
+
+| Appender class
+| `Class name: [org.apache.log4j.FileAppender]`, built by the bridge into
+  `org.apache.logging.log4j.core.appender.FileAppender`
+| `Building Plugin[name=appender, class=org.apache.logging.log4j.core.appender.FileAppender]`
+| yes
+
+| Layout pattern
+| `Parsing layout of class: "org.apache.log4j.PatternLayout"`, delegated to Log4j 2's own
+  `PatternLayout`
+| `PatternLayout$Builder(pattern="%d %5p [%t] %c{1} %X{transactionId} - %m%n", ...)`
+| yes
+
+| Flush disposition
+| `immediateFlush` = `false` (the source states it; the bridge maps the parameter name through a
+  bean-key capitalisation, so the lower-case spelling in the source is honoured)
+| `FileAppender$Builder(... immediateFlush="false" ...)`
+| yes
+
+| Buffering
+| `bufferedIo` = `false` forwarded by the bridge with `bufferSize` = 8192, which raises
+  `WARN The bufferSize is set to 8192 but bufferedIo is false: false`
+| `bufferedIo="null"`, `bufferSize="null"` -- both left at their Log4j 2 defaults, `true` and 8192;
+  no warning is raised
+| see the arbitration below
+
+| Asynchronous
+| no -- no `AsyncAppender`, `AsyncLogger`, ring buffer or disruptor appears in the status output
+| no -- likewise absent from the status output
+| yes
+
+| Location capture
+| not requested
+| `includeLocation="null"`, i.e. not requested; the pattern contains no `%C`, `%M` or `%L`, so no
+  caller frame is walked
+| yes
+|===
+
+=== Rule 6 arbitration -- should `bufferedIo` also be stated explicitly?
+
+Decision:: *No.* `bufferedIo` is deliberately omitted from the translated fixture.
+
+The Log4j 1.x source declares no `BufferedIO` parameter, so there is no value to carry across; the
+open question was whether to state Log4j 1.x's *default* of `false` explicitly in order to reproduce
+the bridge's observed disposition. Baseline observed output is the tie-breaker, and it resolves the
+question as follows.
+
+. *The rendered output is already identical.* The normalized diff between `log4j12-perf.baseline.txt`
+  and the output of the migrated fixture is empty, and it reproduces across independent capture
+  rounds. Buffering governs only *when* bytes reach the disk, never *what* is written, so the
+  tie-breaker's own trigger for revisiting this question -- a non-empty diff attributable to
+  buffering -- does not fire.
+. *Omission reproduces genuine Log4j 1.x, whereas the explicit value reproduces a bridge artefact.*
+  Log4j 1.x's `FileAppender` always writes through a `java.io.OutputStreamWriter`, whose encoder
+  holds an 8192-byte buffer, and adds a `BufferedWriter` on top of it only when `BufferedIO` is
+  true; it flushes per event only when `ImmediateFlush` is true. With `BufferedIO=false` and
+  `ImmediateFlush=false`, therefore, Log4j 1.x still buffers roughly 8 KiB and does not flush per
+  event. Log4j 2's `bufferedIo` does not mean the same thing: it controls whether there is any byte
+  buffer at all. Leaving it unset yields `bufferedIo=true` with `bufferSize=8192`, which is
+  precisely the Log4j 1.x disposition. Stating `bufferedIo="false"` instead reproduces the bridge's
+  behaviour of writing every event straight through -- something Log4j 1.x never did -- and also
+  reproduces the bridge's warning, because the bridge forwards `bufferSize=8192` alongside
+  `bufferedIo=false`.
+. *A control run confirms both halves of point 2.* Adding `bufferedIo="false"` to the translated
+  fixture makes the first event's bytes appear on disk before shutdown and raises
+  `WARN The bufferSize is set to 8192 but bufferedIo is false: false`, exactly as the bridge does.
+  With the attribute omitted, nothing is on disk until the appender stops, and no warning is raised.
+  Note that this is Log4j 2's `bufferSize`-versus-`bufferedIo` warning; the separate
+  "Locking and buffering are mutually exclusive" warning requires `locking="true"` and is not
+  involved here.
+
+The migrated fixture therefore emits strictly fewer diagnostics than the baseline and introduces no
+new warning, while matching Log4j 1.x's buffering and flushing behaviour rather than the bridge's
+approximation of it.
+
+=== Pattern token audit
+
+The bridge does not hand a Log4j 1.x conversion pattern to Log4j 2 verbatim: it rewrites `%p` to
+`%v1Level`, `%x` to `%ndc` and `%X` to `%properties`, then delegates to Log4j 2's own
+`PatternLayout`. Every token in this fixture that is neither `%p` nor `%X` is consequently already
+being rendered by the very same Log4j 2 converter that the translated fixture uses, so `%d`, `%t`,
+`%c{1}`, `%m` and `%n` are identical by construction. Padding and precision are preserved for the
+same reason, the rewrite re-emitting the captured width: `%5p` becomes `%5v1Level`.
+
+The two tokens whose converter identity does change are equivalent here, and the baseline capture
+demonstrates it rather than merely asserting it:
+
+[cols="1,3",options="header"]
+|===
+| Token | Evidence from the baseline capture
+
+| `%5p`
+| The bridge converter renders a level converted by *name*, the native converter renders the level
+  itself; for standard levels these agree. The capture shows `DEBUG`, `ERROR` and `FATAL` unpadded
+  and `INFO` and `WARN` padded to width five, identically in both worlds. This fixture declares no
+  custom level, which is the only case in which the two could diverge.
+
+| `%X{transactionId}`
+| Both the bridge converter and the native converter take a single-key branch that appends the value
+  when present and appends nothing when absent. The capture exercises both: with the key populated
+  the line reads `... PerformanceComparison TX-0001 - ...`, and with the key absent it reads
+  `... PerformanceComparison  - ...` -- a *double space* before the separator, because the key
+  resolves to the empty string. That double space is correct, byte-identical behaviour and must not
+  be "tidied" away, either in the pattern or in the baseline.
+|===
+
+`%c{1}` retains one name element counted from the end, so the capture shows the full simple logger
+name -- `PerformanceComparison`, `FileAppenderProbe`, `child` -- and never a dot-abbreviated form.
+No `%x`, bare `%X`, `%properties`, `%v1Level`, `%r`, `%C`, `%M` or `%L` token appears in this
+fixture, and none was introduced.
+
+=== Rolling policies
+
+None apply. The fixture uses a plain Log4j 1.x `FileAppender` and declares no
+`DailyRollingFileAppender`, no Log4j 1.x `RollingFileAppender`, and no `MaxFileSize`,
+`MaxBackupIndex` or `DatePattern` option. No rolling appender, triggering policy or rollover
+strategy was introduced.
+
+=== Event script behind the baseline capture
+
+The capture was produced by replaying a fixed script whose constants were shared by both worlds, so
+that any difference in rendered output would be attributable to the configuration translation alone:
+one event below the root threshold, which both worlds suppress; one event at each of `DEBUG`, `INFO`,
+`WARN`, `ERROR` and `FATAL` on `org.apache.logging.log4j.PerformanceComparison`, the logger name the
+consuming comparison test shares across all three logging generations; one event on a second,
+differently shaped logger name so that name abbreviation is exercised; one event with the
+`transactionId` key populated and one with it removed; one event from a child logger, which additive
+propagation must deliver to the root appender exactly once; and one event carrying a throwable whose
+stack trace is pinned to fixed frames so that throwable rendering is compared without needing any
+further normalization.
+
+The harness that drove the Log4j 1.x side is transient and is not committed: it necessarily used the
+`org.apache.log4j` facade, and no committed source file in this repository outside the
+`log4j-1.2-api` module may reference that package. Only the normalized capture is committed.
