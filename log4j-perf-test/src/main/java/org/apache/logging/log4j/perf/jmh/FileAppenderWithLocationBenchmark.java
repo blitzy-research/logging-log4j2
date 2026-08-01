@@ -46,13 +46,8 @@ public class FileAppenderWithLocationBenchmark {
     Logger log4j2Logger;
     Logger log4j2RandomLogger;
     org.slf4j.Logger slf4jLogger;
-    Logger log4j1Logger;
-
-    /**
-     * Isolated logger context backing the formerly-Log4j-1.x arm. Held as a field so that
-     * {@link #tearDown()} can shut it down deterministically.
-     */
-    LoggerContext log4j1Context;
+    org.apache.logging.log4j.Logger log4j1Logger;
+    private LoggerContext log4j1Context;
 
     @Setup
     public void setUp() throws Exception {
@@ -64,23 +59,28 @@ public class FileAppenderWithLocationBenchmark {
         log4j2Logger = LogManager.getLogger(FileAppenderWithLocationBenchmark.class);
         log4j2RandomLogger = LogManager.getLogger("TestRandom");
         slf4jLogger = LoggerFactory.getLogger(FileAppenderWithLocationBenchmark.class);
-        // The arm formerly driven by Log4j 1.x is now a native Log4j 2 arm, configured through an
-        // isolated LoggerContext so that it does not contend with the Log4j 2 arm for the global
-        // `log4j.configurationFile` selector set above.
-        final URL log4j1Config =
-                FileAppenderWithLocationBenchmark.class.getClassLoader().getResource("log4j12-perfloc.xml");
-        log4j1Context = new LoggerContext("FileAppenderWithLocationBenchmarkLog4j1", null, log4j1Config.toURI());
+        // The arm formerly driven by Log4j 1.x is now native Log4j 2, and it is deliberately NOT bootstrapped
+        // through a global selector property. `log4j.configurationFile` above already belongs to the Log4j 2
+        // arm -- which owns the two loggers acquired just above -- and ConfigurationFactory returns on the
+        // first key it resolves, so a second global key would silently mis-configure one of the two arms.
+        // That would be especially damaging here: the Log4j 2 peer configuration abbreviates the caller class
+        // with a trailing dot while this arm's configuration uses a bare integer option, so a hijack would
+        // change rendered output rather than fail loudly. Handing a non-null configuration URI to the
+        // LoggerContext constructor skips property lookup altogether, keeping both arms independent inside a
+        // single JVM and leaving the Log4j 2 and Logback arms exactly as they were.
+        final URL log4j1ConfigLocation = FileAppenderWithLocationBenchmark.class.getResource("/log4j12-perfloc.xml");
+        log4j1Context = new LoggerContext("FileAppenderWithLocationBenchmark", null, log4j1ConfigLocation.toURI());
         log4j1Context.start();
-        // Logger name preserved byte-identically (the Log4j 1.x bridge derived it from clazz.getName()).
+        // The logger name is preserved byte-for-byte: Log4j 1.x derived it from clazz.getName(), which is
+        // exactly the argument used here, so the events stay on the logger they have always used.
         log4j1Logger = log4j1Context.getLogger(FileAppenderWithLocationBenchmark.class.getName());
     }
 
     @TearDown
     public void tearDown() {
         System.clearProperty("log4j.configurationFile");
-        System.clearProperty("logback.configurationFile");
-
         Configurator.shutdown(log4j1Context);
+        System.clearProperty("logback.configurationFile");
 
         deleteLogFiles();
     }

@@ -60,9 +60,6 @@ public class FileAppenderThrowableBenchmark {
         // log4j2
         System.setProperty("log4j2.enableThreadlocals", "true");
         System.setProperty("log4j2.configurationFile", "log4j2-perf-file-throwable.xml");
-        // The arm formerly driven by Log4j 1.x no longer sets a global selector property: it is
-        // configured through an isolated LoggerContext in LOG4J1.setUp() so that it cannot contend
-        // with the Log4j 2 arm for the `configurationFile` property set above.
         // logback
         System.setProperty("logback.configurationFile", "logback-perf-file-throwable.xml");
     }
@@ -312,26 +309,23 @@ public class FileAppenderThrowableBenchmark {
             }
         },
         LOG4J1() {
-            Logger logger;
-
-            /** Isolated logger context for this arm, shut down in {@link #tearDown()}. */
-            LoggerContext context;
+            org.apache.logging.log4j.Logger logger;
+            LoggerContext ctx;
 
             @Override
             void setUp() throws Exception {
-                final URL config = FileAppenderThrowableBenchmark.class
-                        .getClassLoader()
-                        .getResource("log4j12-perf-file-throwable.xml");
-                context = new LoggerContext("FileAppenderThrowableBenchmarkLog4j1", null, config.toURI());
-                context.start();
-                // Logger name preserved byte-identically (the Log4j 1.x bridge derived it from
-                // clazz.getName()).
-                logger = context.getLogger(FileAppenderThrowableBenchmark.class.getName());
+                // Configured through an isolated LoggerContext, not a global property: the Log4j 2 arm
+                // already owns `log4j2.configurationFile`, and a non-null URI here bypasses property lookup.
+                final URL configLocation =
+                        FileAppenderThrowableBenchmark.class.getResource("/log4j12-perf-file-throwable.xml");
+                ctx = new LoggerContext("FileAppenderThrowableBenchmarkLog4j1", null, configLocation.toURI());
+                ctx.start();
+                logger = ctx.getLogger(FileAppenderThrowableBenchmark.class.getName());
             }
 
             @Override
             void tearDown() throws Exception {
-                Configurator.shutdown(context);
+                Configurator.shutdown(ctx);
             }
 
             @Override
