@@ -19,11 +19,14 @@ package org.apache.logging.log4j.perf.jmh;
 import static org.apache.logging.log4j.util.Unbox.box;
 
 import java.io.File;
+import java.net.URL;
 import java.util.concurrent.TimeUnit;
 import java.util.logging.FileHandler;
 import java.util.logging.Level;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
+import org.apache.logging.log4j.core.LoggerContext;
+import org.apache.logging.log4j.core.config.Configurator;
 import org.openjdk.jmh.annotations.Benchmark;
 import org.openjdk.jmh.annotations.BenchmarkMode;
 import org.openjdk.jmh.annotations.Mode;
@@ -44,14 +47,19 @@ public class FileAppenderParamsBenchmark {
     Logger log4j2Logger;
     Logger log4j2RandomLogger;
     org.slf4j.Logger slf4jLogger;
-    org.apache.log4j.Logger log4j1Logger;
+    Logger log4j1Logger;
     java.util.logging.Logger julLogger;
     int j, k, m;
+
+    /**
+     * Isolated logger context backing the formerly-Log4j-1.x arm. Held as a field so that
+     * {@link #tearDown()} can shut it down deterministically.
+     */
+    LoggerContext log4j1Context;
 
     @Setup
     public void setUp() throws Exception {
         System.setProperty("log4j.configurationFile", "log4j2-perf.xml");
-        System.setProperty("log4j.configuration", "log4j12-perf.xml");
         System.setProperty("logback.configurationFile", "logback-perf.xml");
 
         deleteLogFiles();
@@ -59,7 +67,15 @@ public class FileAppenderParamsBenchmark {
         log4j2Logger = LogManager.getLogger(getClass());
         log4j2RandomLogger = LogManager.getLogger("TestRandom");
         slf4jLogger = LoggerFactory.getLogger(getClass());
-        log4j1Logger = org.apache.log4j.Logger.getLogger(getClass());
+        // The arm formerly driven by Log4j 1.x is now a native Log4j 2 arm, configured through an
+        // isolated LoggerContext so that it does not contend with the Log4j 2 arm for the global
+        // `log4j.configurationFile` selector set above.
+        final URL log4j1Config = getClass().getClassLoader().getResource("log4j12-perf.xml");
+        log4j1Context = new LoggerContext("FileAppenderParamsBenchmarkLog4j1", null, log4j1Config.toURI());
+        log4j1Context.start();
+        // Logger name preserved byte-identically: the original called getLogger(getClass()), and the
+        // Log4j 1.x bridge derived the name from clazz.getName().
+        log4j1Logger = log4j1Context.getLogger(getClass().getName());
 
         julFileHandler = new FileHandler("target/testJulLog.log");
         julLogger = java.util.logging.Logger.getLogger(getClass().getName());
@@ -72,8 +88,9 @@ public class FileAppenderParamsBenchmark {
     @TearDown
     public void tearDown() {
         System.clearProperty("log4j.configurationFile");
-        System.clearProperty("log4j.configuration");
         System.clearProperty("logback.configurationFile");
+
+        Configurator.shutdown(log4j1Context);
 
         deleteLogFiles();
     }

@@ -20,13 +20,16 @@ import java.io.File;
 import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Proxy;
+import java.net.URL;
 import java.util.concurrent.TimeUnit;
 import java.util.logging.FileHandler;
 import java.util.logging.Level;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
+import org.apache.logging.log4j.core.LoggerContext;
 import org.apache.logging.log4j.core.async.AsyncLoggerContext;
 import org.apache.logging.log4j.core.async.AsyncLoggerContextSelector;
+import org.apache.logging.log4j.core.config.Configurator;
 import org.apache.logging.log4j.core.util.Constants;
 import org.openjdk.jmh.annotations.Benchmark;
 import org.openjdk.jmh.annotations.BenchmarkMode;
@@ -57,8 +60,9 @@ public class FileAppenderThrowableBenchmark {
         // log4j2
         System.setProperty("log4j2.enableThreadlocals", "true");
         System.setProperty("log4j2.configurationFile", "log4j2-perf-file-throwable.xml");
-        // log4j 1.2
-        System.setProperty("log4j.configuration", "log4j12-perf-file-throwable.xml");
+        // The arm formerly driven by Log4j 1.x no longer sets a global selector property: it is
+        // configured through an isolated LoggerContext in LOG4J1.setUp() so that it cannot contend
+        // with the Log4j 2 arm for the `configurationFile` property set above.
         // logback
         System.setProperty("logback.configurationFile", "logback-perf-file-throwable.xml");
     }
@@ -308,15 +312,27 @@ public class FileAppenderThrowableBenchmark {
             }
         },
         LOG4J1() {
-            org.apache.log4j.Logger logger;
+            Logger logger;
+
+            /** Isolated logger context for this arm, shut down in {@link #tearDown()}. */
+            LoggerContext context;
 
             @Override
             void setUp() throws Exception {
-                logger = org.apache.log4j.Logger.getLogger(FileAppenderThrowableBenchmark.class);
+                final URL config = FileAppenderThrowableBenchmark.class
+                        .getClassLoader()
+                        .getResource("log4j12-perf-file-throwable.xml");
+                context = new LoggerContext("FileAppenderThrowableBenchmarkLog4j1", null, config.toURI());
+                context.start();
+                // Logger name preserved byte-identically (the Log4j 1.x bridge derived it from
+                // clazz.getName()).
+                logger = context.getLogger(FileAppenderThrowableBenchmark.class.getName());
             }
 
             @Override
-            void tearDown() throws Exception {}
+            void tearDown() throws Exception {
+                Configurator.shutdown(context);
+            }
 
             @Override
             void log(final String message, final Throwable throwable) {

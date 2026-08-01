@@ -18,8 +18,8 @@ package org.apache.logging.log4j.perf.jmh;
 
 import java.io.File;
 import java.util.concurrent.TimeUnit;
-import org.apache.log4j.LogManager;
-import org.apache.log4j.Logger;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.apache.logging.log4j.perf.util.BenchmarkMessageParams;
 import org.openjdk.jmh.annotations.Benchmark;
 import org.openjdk.jmh.annotations.BenchmarkMode;
@@ -40,7 +40,7 @@ public class AsyncAppenderLog4j1LocationBenchmark {
 
     @Setup(Level.Trial)
     public void up() {
-        System.setProperty("log4j.configuration", "perf-log4j12-async-location-noOpAppender.xml");
+        System.setProperty("log4j2.configurationFile", "perf-log4j12-async-location-noOpAppender.xml");
         logger = LogManager.getLogger(getClass());
     }
 
