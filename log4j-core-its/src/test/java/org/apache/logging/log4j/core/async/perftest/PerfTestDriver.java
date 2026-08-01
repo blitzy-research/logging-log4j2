@@ -94,7 +94,6 @@ public class PerfTestDriver {
             // args.add("-XX:+PrintGCApplicationConcurrentTime");
             // args.add("-XX:+PrintSafepointStatistics");
 
-            args.add("-Dlog4j.configuration=" + log4jConfig); // log4j 1.2
             args.add("-Dlog4j.configurationFile=" + log4jConfig); // log4j 2
             args.add("-Dlogback.configurationFile=" + log4jConfig); // logback
 

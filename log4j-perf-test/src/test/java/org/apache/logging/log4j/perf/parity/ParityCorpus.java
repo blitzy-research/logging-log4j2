@@ -72,11 +72,13 @@ import org.junit.jupiter.api.Assertions;
  *       {@link #deleteDestination(Path)}, {@link #TESTLOG4J_DESTINATION} and {@link #PERFTEST_DESTINATION}.</li>
  * </ul>
  * <p>
- * <strong>The committed script is the runtime authority.</strong> Its counts, logger names, levels and message
- * text are asserted against {@link #EXPECTED_EVENT_COUNTS} on load, so a fixture that has drifted from this code
- * fails loudly instead of silently weakening a gate. Three of the recorded logger names are generated
- * benchmark-state names and two more look like copy-paste defects; all are carried character for character,
- * because renaming any of them would move its events onto a differently configured logger.
+ * <strong>The committed script is verified, not merely trusted.</strong> Its records are asserted against
+ * {@link #EXPECTED_MANIFEST} on load — configuration id, logger name, level, message text, throwable field and
+ * order, entry for entry — and the per-id counts derived from that manifest are asserted too, so a fixture that
+ * has drifted from this code fails loudly instead of silently weakening a gate. Every recorded logger name is the
+ * name its arm's acquisition site requests, and one of them names a different benchmark than the arm that emitted
+ * the event; all are carried character for character, because renaming any of them would move its events onto a
+ * differently configured logger.
  * </p>
  * <p>
  * <strong>What this class deliberately does not do.</strong> It sets, clears and reads <em>no</em> system
@@ -87,8 +89,10 @@ import org.junit.jupiter.api.Assertions;
  * translation decision live in the {@code effective-config.adoc} beside the baselines.
  * </p>
  * <p>
- * Every construct used here is valid at the API surface of the peer module that reuses this harness's shape, so
- * no language or library feature newer than that surface appears anywhere in this file.
+ * Every construct used here stays inside this module's own compiled API surface. The peer gate that covers the
+ * other module's three configurations was written to the same shape but shares no code with this file: that module
+ * compiles at a lower release level and a dependency on this one would close a build cycle, so it embeds its own
+ * event constants and its own normalizer, and the two are kept in agreement by review rather than by reuse.
  * </p>
  */
 final class ParityCorpus {
@@ -113,11 +117,11 @@ final class ParityCorpus {
     /**
      * Method name carried by every fabricated caller frame.
      * <p>
-     * Only one of the seven fixtures renders the caller-location tokens, and its two committed baseline lines
-     * both render {@code FileAppenderWithLocationBenchmark.log4j1File}, so both must be emitted from one caller
-     * identity. The value is the emitting arm of the with-location file-appender benchmark. It is applied
-     * uniformly to every scripted event because a uniform fabricated frame keeps the harness deterministic, and
-     * because no other fixture's layout renders a class, a method or a line number at all.
+     * Only one of the seven fixtures renders the caller-location tokens, and its committed baseline line renders
+     * {@code FileAppenderWithLocationBenchmark.log4j1File}, so that caller identity must be reproduced exactly.
+     * The value is the emitting arm of the with-location file-appender benchmark. It is applied uniformly to every
+     * scripted event because a uniform fabricated frame keeps the harness deterministic, and because no other
+     * fixture's layout renders a class, a method or a line number at all.
      * </p>
      */
     private static final String EMITTING_METHOD_NAME = "log4j1File";
@@ -154,25 +158,109 @@ final class ParityCorpus {
      * <p>
      * A full match with capture groups is used in preference to splitting, because {@code [^|]} cannot cross a
      * delimiter: the grouping is therefore unambiguous, a message that happens to contain no delimiter is never
-     * split further, and an absent fifth field is distinguishable from an empty one. The level alphabet is
-     * exactly the set the committed script uses, so a level this harness cannot replay faithfully is rejected
-     * rather than coerced.
+     * split further, and an absent fifth field is distinguishable from an empty one.
+     * </p>
+     * <p>
+     * The level alphabet is closed at exactly the three levels the superseded arms emit — {@code DEBUG} on the
+     * four file fixtures, {@code ERROR} on the throwable fixture, {@code INFO} on the two counting fixtures. It is
+     * deliberately narrower than the level model: a level no arm emits could only enter this corpus as an invented
+     * event, and an invented event proves nothing about a translation, because no capture of the superseded
+     * generation ever recorded it. A data line at any other level is rejected outright rather than coerced or
+     * replayed.
      * </p>
      */
     private static final Pattern DATA_LINE =
-            Pattern.compile("^(T[1-7])\\|([^|]+)\\|(DEBUG|INFO|WARN|ERROR)\\|([^|]+)(?:\\|([^|]+))?$");
+            Pattern.compile("^(T[1-7])\\|([^|]+)\\|(DEBUG|INFO|ERROR)\\|([^|]+)(?:\\|([^|]+))?$");
 
     /**
-     * Event count expected for each configuration id, keyed in ascending id order.
+     * Grammar of a recorded-count record, {@code <configId>=<count>}, as used by the counting fixtures' baseline.
      * <p>
-     * These are the counts the committed script declares among its own invariants. Twenty-one events are derived
-     * from benchmark arms and three are controls: a field-width control on each of the two fixtures whose layout
-     * pads the level field, and a positive control on the fixture whose root level suppresses everything else.
-     * A script that does not yield exactly these counts is a defect in the fixture or in this code, never
-     * something to accommodate.
+     * It is anchored and admits digits only, so a record that has been reordered, duplicated, renamed or given a
+     * non-numeric count cannot be read as a valid one.
      * </p>
      */
-    private static final Map<String, Integer> EXPECTED_EVENT_COUNTS = expectedEventCounts();
+    private static final Pattern COUNT_RECORD = Pattern.compile("^(T[1-7])=([0-9]+)$");
+
+    /** Logger acquired by the plain file-appender benchmark, from a class literal. */
+    private static final String FILE_APPENDER_LOGGER = "org.apache.logging.log4j.perf.jmh.FileAppenderBenchmark";
+
+    /** Logger acquired by the parameterizing file-appender benchmark, from a class literal. */
+    private static final String FILE_APPENDER_PARAMS_LOGGER =
+            "org.apache.logging.log4j.perf.jmh.FileAppenderParamsBenchmark";
+
+    /** Logger acquired by the benchmark that measures a suppressed call, from a class literal. */
+    private static final String DEBUG_DISABLED_LOGGER = "org.apache.logging.log4j.perf.jmh.DebugDisabledBenchmark";
+
+    /**
+     * Logger acquired by the with-location file-appender benchmark, from a class literal.
+     * <p>
+     * One of the two events recorded on this name belongs to a <em>different</em> benchmark, which requests its
+     * logger by this class literal rather than by its own. That reads like a copy-paste defect and it is carried
+     * verbatim regardless: the name is the logger's identity, and therefore its configured level and appender
+     * wiring, so "correcting" it would move the event onto a differently configured logger.
+     * </p>
+     */
+    private static final String FILE_APPENDER_WITH_LOCATION_LOGGER =
+            "org.apache.logging.log4j.perf.jmh.FileAppenderWithLocationBenchmark";
+
+    /** Logger acquired by the throwable-rendering file-appender benchmark, from a class literal. */
+    private static final String FILE_APPENDER_THROWABLE_LOGGER =
+            "org.apache.logging.log4j.perf.jmh.FileAppenderThrowableBenchmark";
+
+    /**
+     * Logger acquired by the asynchronous throughput-and-latency runner, from a class literal.
+     * <p>
+     * This is the one recorded name outside the benchmark package, because the arm that emitted the event is an
+     * integration-test runner rather than a benchmark.
+     * </p>
+     */
+    private static final String RUN_LOG4J1_LOGGER = "org.apache.logging.log4j.core.async.perftest.RunLog4j1";
+
+    /** Logger acquired by the asynchronous no-op-appender benchmark, from a class literal. */
+    private static final String ASYNC_APPENDER_LOGGER =
+            "org.apache.logging.log4j.perf.jmh.AsyncAppenderLog4j1Benchmark";
+
+    /** Logger acquired by the asynchronous no-op-appender benchmark that also captures location. */
+    private static final String ASYNC_APPENDER_LOCATION_LOGGER =
+            "org.apache.logging.log4j.perf.jmh.AsyncAppenderLog4j1LocationBenchmark";
+
+    /** The sixteen-character fixed-width message shared by the first arm of each counting fixture. */
+    private static final String SIXTEEN_CHARACTER_MESSAGE = "aaaaaaaaaaaaaaaa";
+
+    /** Throwable specification of the single scripted event that carries one. */
+    private static final String THROWABLE_SPEC = ILLEGAL_STATE_EXCEPTION + ":Test Throwable";
+
+    /**
+     * The complete manifest of scripted events, in significant order: one entry per data line the committed script
+     * must carry, rendered in the script's own grammar.
+     * <p>
+     * This is the semantic oracle, and it is stronger than a count on purpose. A count alone admits a fixture in
+     * which an event has been re-levelled, moved to another logger, reworded, reordered or replaced by an invented
+     * one — every drift that would silently weaken a parity gate while leaving its arithmetic intact. The manifest
+     * pins the configuration id, the logger name, the level, the message text and the presence or absence of the
+     * throwable field of every record, and pins their order, so the committed script and this code must agree
+     * character for character or class initialization fails.
+     * </p>
+     * <p>
+     * Twenty-one events, all of them derived from an arm of the superseded generation: three on {@code T1}, two on
+     * {@code T2}, one each on {@code T3}, {@code T4} and {@code T5}, twelve on {@code T6} and one on {@code T7}.
+     * <strong>No control, probe or otherwise invented event appears, and none may be added.</strong> An event no
+     * arm emits carries no parity information, because no capture of the superseded generation ever recorded it;
+     * the evidence such an event would seem to supply is obtained instead from the structural assertions the
+     * consuming test makes while each fixture is started.
+     * </p>
+     */
+    private static final List<String> EXPECTED_MANIFEST = expectedManifest();
+
+    /**
+     * Event count expected for each configuration id, in the manifest's own encounter order.
+     * <p>
+     * Derived from {@link #EXPECTED_MANIFEST} rather than restated, so the two can never disagree. A script that
+     * does not yield exactly these counts is a defect in the fixture or in this code, never something to
+     * accommodate.
+     * </p>
+     */
+    private static final Map<String, Integer> EXPECTED_EVENT_COUNTS = expectedEventCounts(EXPECTED_MANIFEST);
 
     /** Immutable, ordered event index, built once from the committed script. */
     private static final Map<String, List<Event>> EVENTS_BY_CONFIG_ID = loadEventScript();
@@ -204,28 +292,110 @@ final class ParityCorpus {
     }
 
     /**
-     * Builds the expected per-id event counts. Declared as a method rather than as a literal because the map is
+     * Builds the expected event manifest. Declared as a method rather than as a literal because the list is
      * assembled with only constructs available at the API surface shared with the peer module.
+     * <p>
+     * Every entry names the arm that emitted the event and reproduces the text that arm rendered. The messages the
+     * concatenating arms built are carried as their rendered result, including the counter values one fresh pass
+     * produced, which is why the order of the entries is part of the oracle rather than an incidental detail.
+     * </p>
      */
-    private static Map<String, Integer> expectedEventCounts() {
+    private static List<String> expectedManifest() {
+        final List<String> manifest = new ArrayList<>();
+
+        // T1 -- the synchronous shared-destination fixture whose root level admits debug. One event from the plain
+        // file-appender arm and two from the parameterizing arm, whose second message embeds instance counters.
+        manifest.add(record("T1", FILE_APPENDER_LOGGER, Level.DEBUG, "This is a debug message"));
+        manifest.add(record("T1", FILE_APPENDER_PARAMS_LOGGER, Level.DEBUG, "This is a debug [1] message"));
+        manifest.add(record("T1", FILE_APPENDER_PARAMS_LOGGER, Level.DEBUG, "Val1=2, val2=1, val3=1"));
+
+        // T2 -- the same layout and destination at root level error. Both events are suppressed by that root
+        // level, which is precisely the evidence this fixture exists to give, so its capture is byte-empty.
+        manifest.add(record("T2", DEBUG_DISABLED_LOGGER, Level.DEBUG, "This is a debug [2] message"));
+        manifest.add(record("T2", FILE_APPENDER_WITH_LOCATION_LOGGER, Level.DEBUG, "This won't be logged"));
+
+        // T3 -- the only fixture whose layout renders the caller class, method and line.
+        manifest.add(record("T3", FILE_APPENDER_WITH_LOCATION_LOGGER, Level.DEBUG, "This is a debug message"));
+
+        // T4 -- the only event that carries a throwable, and so the only record with a fifth field.
+        manifest.add(record("T4", FILE_APPENDER_THROWABLE_LOGGER, Level.ERROR, "Caught an exception", THROWABLE_SPEC));
+
+        // T5 -- the asynchronous file fixture. Recorded at debug, the level its own arm emits. The peer corpus
+        // records this same runner at info for its own fixtures; the two are deliberately not harmonised, because
+        // each corpus records the level its own arm emitted.
+        manifest.add(record("T5", RUN_LOG4J1_LOGGER, Level.DEBUG, "Short msg"));
+
+        // T6 -- the counting no-op fixture: the fixed-width arm followed by the eleven concatenating arms, in
+        // ascending parameter count. Twelve events, matching the twelve annotated arms of the benchmark.
+        manifest.add(record("T6", ASYNC_APPENDER_LOGGER, Level.INFO, SIXTEEN_CHARACTER_MESSAGE));
+        manifest.add(record("T6", ASYNC_APPENDER_LOGGER, Level.INFO, "p1=1"));
+        manifest.add(record("T6", ASYNC_APPENDER_LOGGER, Level.INFO, "p1=1, p2=2"));
+        manifest.add(record("T6", ASYNC_APPENDER_LOGGER, Level.INFO, "p1=1, p2=2, p3=3"));
+        manifest.add(record("T6", ASYNC_APPENDER_LOGGER, Level.INFO, "p1=1, p2=2, p3=3, p4=4"));
+        manifest.add(record("T6", ASYNC_APPENDER_LOGGER, Level.INFO, "p1=1, p2=2, p3=3, p4=4, p5=5"));
+        manifest.add(record("T6", ASYNC_APPENDER_LOGGER, Level.INFO, "p1=1, p2=2, p3=3, p4=4, p5=5, p6=6"));
+        manifest.add(record("T6", ASYNC_APPENDER_LOGGER, Level.INFO, "p1=1, p2=2, p3=3, p4=4, p5=5, p6=6, p7=7"));
+        manifest.add(record("T6", ASYNC_APPENDER_LOGGER, Level.INFO, "p1=1, p2=2, p3=3, p4=4, p5=5, p6=6, p7=7, p8=8"));
+        manifest.add(record(
+                "T6", ASYNC_APPENDER_LOGGER, Level.INFO, "p1=1, p2=2, p3=3, p4=4, p5=5, p6=6, p7=7, p8=8, p9=9"));
+        manifest.add(record(
+                "T6",
+                ASYNC_APPENDER_LOGGER,
+                Level.INFO,
+                "p1=1, p2=2, p3=3, p4=4, p5=5, p6=6, p7=7, p8=8, p9=9, p10=10"));
+        manifest.add(record(
+                "T6",
+                ASYNC_APPENDER_LOGGER,
+                Level.INFO,
+                "p1=1, p2=2, p3=3, p4=4, p5=5, p6=6, p7=7, p8=8, p9=9, p10=10, p11=11"));
+
+        // T7 -- the same counting fixture with location capture enabled. One event, matching its one annotated arm.
+        manifest.add(record("T7", ASYNC_APPENDER_LOCATION_LOGGER, Level.INFO, SIXTEEN_CHARACTER_MESSAGE));
+
+        return Collections.unmodifiableList(manifest);
+    }
+
+    /** Renders one manifest entry with no throwable field, in the script's own grammar. */
+    private static String record(
+            final String configId, final String loggerName, final Level level, final String message) {
+        return configId + '|' + loggerName + '|' + level.name() + '|' + message;
+    }
+
+    /** Renders one manifest entry carrying a throwable specification, in the script's own grammar. */
+    private static String record(
+            final String configId,
+            final String loggerName,
+            final Level level,
+            final String message,
+            final String throwableSpec) {
+        return record(configId, loggerName, level, message) + '|' + throwableSpec;
+    }
+
+    /**
+     * Derives the expected per-id event counts from the manifest, preserving the manifest's encounter order.
+     *
+     * @param manifest the expected event manifest
+     * @return an unmodifiable, insertion-ordered map from configuration id to event count
+     */
+    private static Map<String, Integer> expectedEventCounts(final List<String> manifest) {
         final Map<String, Integer> counts = new LinkedHashMap<>();
-        counts.put("T1", 4);
-        counts.put("T2", 3);
-        counts.put("T3", 2);
-        counts.put("T4", 1);
-        counts.put("T5", 1);
-        counts.put("T6", 12);
-        counts.put("T7", 1);
+        for (final String entry : manifest) {
+            final String configId = entry.substring(0, entry.indexOf('|'));
+            final Integer running = counts.get(configId);
+            counts.put(configId, running == null ? 1 : running.intValue() + 1);
+        }
         return Collections.unmodifiableMap(counts);
     }
 
     /**
      * Parses the committed script into an immutable, ordered index.
      * <p>
-     * Lines whose first non-whitespace character is {@code #} are comments and blank lines are permitted; both are
-     * skipped. Every remaining line must match {@link #DATA_LINE} in full. The resulting index is verified against
-     * {@link #EXPECTED_EVENT_COUNTS} before it is published, so a drifted fixture is reported with the id and the
-     * two counts rather than surfacing later as a mystifying parity failure.
+     * Comments and blank lines are skipped by {@link #dataLines(String)}, which is the single place either fixture's
+     * skipping rule is expressed. Every remaining line must match {@link #DATA_LINE} in full, and the resulting
+     * sequence must equal {@link #EXPECTED_MANIFEST} entry for entry and in order. Verifying the manifest before
+     * the counts is deliberate: an entry that has been re-levelled, moved to another logger, reworded, reordered or
+     * replaced by an invented event is reported as exactly that, at the record where it occurs, rather than as an
+     * arithmetic mismatch or — worse — not at all.
      * </p>
      * <p>
      * A fixture that is missing, unreadable or malformed is a defect in the corpus or in the build, so it is
@@ -234,23 +404,15 @@ final class ParityCorpus {
      * </p>
      */
     private static Map<String, List<Event>> loadEventScript() {
-        final String script;
-        try {
-            script = readResource(EVENT_SCRIPT_RESOURCE);
-        } catch (final IOException readFailure) {
-            throw new IllegalStateException("cannot read the event script " + EVENT_SCRIPT_RESOURCE, readFailure);
-        }
+        final List<String> recorded = dataLines(EVENT_SCRIPT_RESOURCE);
+        verifyManifest(recorded);
         final Map<String, List<Event>> index = new LinkedHashMap<>();
-        final String[] lines = script.split("\n", -1);
-        for (int lineIndex = 0; lineIndex < lines.length; lineIndex++) {
-            final String line = lines[lineIndex];
-            if (isSkippable(line)) {
-                continue;
-            }
+        for (int recordIndex = 0; recordIndex < recorded.size(); recordIndex++) {
+            final String line = recorded.get(recordIndex);
             final Matcher matcher = DATA_LINE.matcher(line);
             if (!matcher.matches()) {
                 throw new IllegalStateException(
-                        "malformed data line " + (lineIndex + 1) + " in " + EVENT_SCRIPT_RESOURCE + ": " + line);
+                        "malformed data record " + (recordIndex + 1) + " in " + EVENT_SCRIPT_RESOURCE + ": " + line);
             }
             final String configId = matcher.group(1);
             final Event event = new Event(
@@ -272,6 +434,74 @@ final class ParityCorpus {
     }
 
     /**
+     * Reads a corpus fixture and returns its significant lines, in encounter order, with comments and blank lines
+     * removed.
+     * <p>
+     * Both fixtures this harness serves — the event script and the counting fixtures' recorded-count baseline —
+     * carry ordered records interleaved with explanatory comments. The skipping rule therefore lives here once and
+     * neither consumer restates it, so the two can never disagree about what counts as a record.
+     * </p>
+     * <p>
+     * A line whose first non-whitespace character is {@code #} is a comment and a line that is empty or entirely
+     * whitespace is blank; both are dropped. Nothing else is dropped, trimmed or reordered: a record is returned
+     * exactly as it was written, because its bytes are part of what the caller verifies.
+     * </p>
+     *
+     * @param resourcePath absolute classpath path of the fixture
+     * @return an unmodifiable list of the fixture's significant lines, in file order
+     * @throws IllegalStateException if the fixture is missing or unreadable
+     */
+    static List<String> dataLines(final String resourcePath) {
+        final String content;
+        try {
+            content = readResource(resourcePath);
+        } catch (final IOException readFailure) {
+            throw new IllegalStateException("cannot read the corpus fixture " + resourcePath, readFailure);
+        }
+        final List<String> records = new ArrayList<>();
+        for (final String line : content.split("\n", -1)) {
+            if (!isSkippable(line)) {
+                records.add(line);
+            }
+        }
+        return Collections.unmodifiableList(records);
+    }
+
+    /**
+     * Parses an ordered {@code <configId>=<count>} fixture into an insertion-ordered map.
+     * <p>
+     * The counting fixtures record their observed event counts as such a fixture, and <em>the order of its records
+     * is part of the contract</em>: the two fixtures differ only in whether location is captured, so a reader that
+     * accepted them in either order would also accept a baseline in which their two counts had been swapped. This
+     * parser therefore preserves encounter order in the returned map and rejects a duplicated id outright, leaving
+     * the caller to assert the exact expected sequence.
+     * </p>
+     *
+     * @param resourcePath absolute classpath path of the fixture
+     * @return an unmodifiable map from configuration id to recorded count, in the fixture's own record order
+     * @throws IllegalStateException if the fixture is missing, unreadable, malformed, or repeats an id
+     */
+    static Map<String, Integer> readRecordedCounts(final String resourcePath) {
+        final List<String> records = dataLines(resourcePath);
+        final Map<String, Integer> counts = new LinkedHashMap<>();
+        for (int recordIndex = 0; recordIndex < records.size(); recordIndex++) {
+            final String record = records.get(recordIndex);
+            final Matcher matcher = COUNT_RECORD.matcher(record);
+            if (!matcher.matches()) {
+                throw new IllegalStateException(
+                        "malformed count record " + (recordIndex + 1) + " in " + resourcePath + ": " + record);
+            }
+            final String configId = matcher.group(1);
+            if (counts.containsKey(configId)) {
+                throw new IllegalStateException("duplicate configuration id " + configId + " at count record "
+                        + (recordIndex + 1) + " in " + resourcePath);
+            }
+            counts.put(configId, Integer.valueOf(matcher.group(2)));
+        }
+        return Collections.unmodifiableMap(counts);
+    }
+
+    /**
      * Returns {@code true} for a comment or blank line. A comment is recognised by its first non-whitespace
      * character, so an indented comment is skipped too.
      */
@@ -286,7 +516,36 @@ final class ParityCorpus {
     }
 
     /**
-     * Verifies the parsed index against the counts the committed script declares, then freezes it.
+     * Verifies the recorded data records against {@link #EXPECTED_MANIFEST}, entry for entry and in order.
+     * <p>
+     * The comparison is by whole record, so it covers the configuration id, the logger name, the level, the message
+     * text and the presence, absence and content of the throwable field in one step, and it covers their order.
+     * The first divergence is reported with the record ordinal and both texts, because that is what identifies the
+     * drift; a length mismatch is reported before any positional comparison, so a truncated or extended fixture
+     * cannot be described as a mismatch at its first surplus record.
+     * </p>
+     *
+     * @param recorded the fixture's data records, in file order
+     * @throws IllegalStateException on any divergence from the manifest
+     */
+    private static void verifyManifest(final List<String> recorded) {
+        if (recorded.size() != EXPECTED_MANIFEST.size()) {
+            throw new IllegalStateException("wrong number of data records in " + EVENT_SCRIPT_RESOURCE + ": expected "
+                    + EXPECTED_MANIFEST.size() + " but found " + recorded.size());
+        }
+        for (int recordIndex = 0; recordIndex < EXPECTED_MANIFEST.size(); recordIndex++) {
+            final String expected = EXPECTED_MANIFEST.get(recordIndex);
+            final String actual = recorded.get(recordIndex);
+            if (!expected.equals(actual)) {
+                throw new IllegalStateException("data record " + (recordIndex + 1) + " of " + EXPECTED_MANIFEST.size()
+                        + " in " + EVENT_SCRIPT_RESOURCE + " does not match the expected manifest;" + " expected ["
+                        + expected + "] but found [" + actual + "]");
+            }
+        }
+    }
+
+    /**
+     * Verifies the parsed index against the counts derived from the manifest, then freezes it.
      *
      * @throws IllegalStateException if any id is missing, unexpected, or carries the wrong number of events
      */
@@ -678,8 +937,8 @@ final class ParityCorpus {
      * destination and none of them declares an append option, whose default appends; the file managers are also
      * keyed by destination name and reference-counted, so a stale file must be removed while no context holds its
      * manager — that is, immediately before the next fixture is booted, never during a capture. Without it, one
-     * fixture's capture would carry the previous fixture's lines, and the fixture whose root level suppresses
-     * everything but its own control event would appear to have rendered them.
+     * fixture's capture would carry the previous fixture's lines, and the fixture whose root level suppresses every
+     * scripted event — whose capture must be byte-empty — would appear to have rendered them.
      * </p>
      * <p>
      * The removal is idempotent and reports what it did rather than discarding the outcome, so a caller that cares
@@ -731,10 +990,9 @@ final class ParityCorpus {
         /**
          * Logger name, carried character for character from the script.
          * <p>
-         * Three of the recorded names are generated benchmark-state names, because the arms that emitted them
-         * acquire their logger from the runtime class of a generated object rather than from a class literal, and
-         * one more names a different benchmark than the one that emitted the event. None may be "corrected": the
-         * name is the logger's identity, and therefore its configured level and appender wiring.
+         * Every recorded name is the name its arm's acquisition site requests, and one of them names a different
+         * benchmark than the arm that emitted the event. None may be "corrected": the name is the logger's
+         * identity, and therefore its configured level and appender wiring.
          * </p>
          */
         String loggerName() {

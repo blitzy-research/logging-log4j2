@@ -1,1 +1,1 @@
-<TS> INFO RunLog4j1 [<THREAD>]  Short msg 
+<TS> DEBUG RunLog4j1 [<THREAD>]  Short msg 

@@ -32,6 +32,7 @@ import org.apache.logging.log4j.core.LifeCycle;
 import org.apache.logging.log4j.core.LoggerContext;
 import org.apache.logging.log4j.core.appender.AsyncAppender;
 import org.apache.logging.log4j.core.appender.FileAppender;
+import org.apache.logging.log4j.core.appender.FileManager;
 import org.apache.logging.log4j.core.config.AppenderRef;
 import org.apache.logging.log4j.core.config.Configuration;
 import org.apache.logging.log4j.core.config.LoggerConfig;
@@ -68,11 +69,11 @@ import org.junit.jupiter.api.Test;
  * </p>
  * <p>
  * Two obligations go beyond comparing text, and both are the corpus's own. First, the fixture whose root level is
- * {@code error} admits none of the levels its siblings emit, so its capture is a single control line that cannot
- * express its own wiring: the corpus requires that fixture's configuration to be asserted structurally as well,
- * and requires its conversion pattern to be bound to the pattern its {@code debug} sibling renders, because that
- * is the only route by which it inherits the sibling's rendered proof that the level field keeps its minimum
- * width. Second, the destinations must be fresh, since four fixtures share one file and none of them truncates.
+ * {@code error} admits none of the levels its scripted events carry, so its capture is byte-empty and can express
+ * no wiring at all: the corpus requires that fixture's configuration to be asserted structurally as well, and
+ * requires its conversion pattern to be bound to the pattern its {@code debug} sibling renders, because that is
+ * the only route by which it inherits the sibling's rendered proof that the level field keeps its minimum width.
+ * Second, the destinations must be fresh, since four fixtures share one file and none of them truncates.
  * Both are honoured below. The observed effective-configuration evidence and the rationale for every translation
  * decision live in the {@code effective-config.adoc} beside the baselines rather than here; this class is the
  * rendered-output gate.
@@ -178,6 +179,27 @@ class Log4j1ConfigParityTest {
     /** Queue depth of the asynchronous wrapper, held verbatim from the superseded fixture's buffer size. */
     private static final int ASYNC_QUEUE_CAPACITY = 262144;
 
+    /**
+     * Append disposition of the four synchronous fixtures. None of them states the option, and both generations
+     * default it to true, so the translation preserves it by staying silent.
+     */
+    private static final boolean SHARED_APPEND = true;
+
+    /**
+     * Append disposition of the asynchronous fixture, which states {@code append="false"} explicitly because its
+     * superseded form did. Truncating on start rather than appending is part of what the fixture measures.
+     */
+    private static final boolean ASYNC_APPEND = false;
+
+    /**
+     * Buffer size every fixture's destination ends up with. No fixture states a size, so each one takes the
+     * default, and the default is the same 8192 bytes the superseded generation buffered with — which is why
+     * omitting the buffering options is a faithful translation rather than a silent change. The manager reports a
+     * negative size when a destination is not buffered at all, so this assertion also catches a fixture that lost
+     * its buffer.
+     */
+    private static final int FILE_BUFFER_SIZE = 8192;
+
     // -----------------------------------------------------------------------------------------------------------
     // The fresh-destination contract
     // -----------------------------------------------------------------------------------------------------------
@@ -225,9 +247,14 @@ class Log4j1ConfigParityTest {
     // -----------------------------------------------------------------------------------------------------------
 
     /**
-     * The four-line synchronous capture: three benchmark-derived events and the field-width control that makes
-     * {@code %5p} observable, since every benchmark-derived event on this fixture renders a five-character level
-     * and would therefore render identically through a bare {@code %p}.
+     * The three-line synchronous capture, one line per scripted event.
+     * <p>
+     * Every scripted event on this fixture renders a five-character level, so these three lines would render
+     * identically through a bare {@code %p}: the rendered text alone cannot show that the level field keeps its
+     * minimum width. That gap is closed by the structural assertion below, which compares this fixture's configured
+     * conversion pattern character for character while the fixture is started — not by inventing a shorter-levelled
+     * event that no arm of the superseded generation ever emitted.
+     * </p>
      */
     @Test
     @DisplayName("log4j12-perf.xml renders its committed baseline byte for byte")
@@ -240,28 +267,35 @@ class Log4j1ConfigParityTest {
     }
 
     /**
-     * The suppression fixture. Its root level admits neither scripted debug event, so the capture is the single
-     * positive control the corpus adds at {@code error}, and the two halves carry the evidence together: the
-     * control line is present, so the configuration loaded, the named appender is wired to the root and the
-     * destination is right; neither debug message is present, so the level filter still applies. Either half alone
-     * would be satisfied by a fixture that never worked at all, which is why the structural assertions below are
-     * required rather than optional.
+     * The suppression fixture. Its root level admits neither scripted debug event, so nothing is rendered at all and
+     * the capture is <em>byte-empty</em>.
+     * <p>
+     * Byte emptiness on its own is worthless evidence, because a fixture that never loaded, never resolved its
+     * appender reference or never opened its destination produces exactly the same nothing. The two halves of this
+     * case therefore carry the evidence together: the structural assertions establish that the configuration was
+     * built by the schema's own factory, reached its started state, carries root level {@code error}, resolved its
+     * single appender reference to a started file appender on the shared destination, and renders through the very
+     * pattern its {@code debug} sibling renders; the byte-empty capture then establishes that the level filter still
+     * applies. Neither half may be dropped, and the emptiness must not be replaced by an invented event admitted at
+     * {@code error} — the fixture's whole purpose is that it renders nothing.
+     * </p>
      */
     @Test
-    @DisplayName("log4j12-perf2.xml renders its committed baseline byte for byte and suppresses both debug events")
+    @DisplayName("log4j12-perf2.xml suppresses both scripted debug events and renders a byte-empty capture")
     void log4j12Perf2RendersItsBaseline() throws Exception {
         try (LoggerContext context = ParityCorpus.startContext(T2, T2_CONFIG)) {
             assertSharedFileFixture(context.getConfiguration(), Level.ERROR, PADDED_LEVEL_PATTERN);
             ParityCorpus.replay(context, T2);
         }
         assertRenderedParity(T2, T2_BASELINE, ParityCorpus.TESTLOG4J_DESTINATION);
+        assertByteEmpty(T2, T2_BASELINE, ParityCorpus.TESTLOG4J_DESTINATION);
     }
 
     /**
-     * The caller-location capture. Both of its lines are emitted from one fabricated caller identity, so the
-     * rendered class and method are compared byte for byte on both while only the source line number is
-     * normalized — the single tolerated output difference in the whole corpus, and the reason the class token's
-     * abbreviation option must not be rewritten.
+     * The caller-location capture. Its single line is emitted from a fabricated caller identity, so the rendered
+     * class and method are compared byte for byte while only the source line number is normalized — the single
+     * tolerated output difference in the whole corpus, and the reason the class token's abbreviation option must
+     * not be rewritten.
      */
     @Test
     @DisplayName("log4j12-perfloc.xml renders its committed baseline byte for byte, caller class and method included")
@@ -339,6 +373,34 @@ class Log4j1ConfigParityTest {
                         + " reason to widen the normalizer, relax this assertion or edit the baseline");
     }
 
+    /**
+     * Asserts that a suppression fixture rendered nothing whatsoever, on both sides of the comparison.
+     * <p>
+     * The normalized comparison already covers this, but only implicitly: it would keep passing if a line were added
+     * to the committed baseline and the same line began to be rendered. Asserting emptiness against the raw bytes of
+     * both the baseline and the capture states the contract directly, so that restoring the suppressed fixture's
+     * output — in either place — fails immediately and by name.
+     * </p>
+     *
+     * @param configId the configuration id under test, named in every failure message
+     * @param baselineResource absolute classpath path of the committed baseline, which must itself be byte-empty
+     * @param destination file the fixture was configured to write
+     * @throws IOException if the baseline or the capture cannot be read
+     */
+    private static void assertByteEmpty(final String configId, final String baselineResource, final Path destination)
+            throws IOException {
+        assertEquals(
+                "",
+                ParityCorpus.readResource(baselineResource),
+                "the committed baseline " + baselineResource + " must be byte-empty, because " + configId
+                        + " suppresses every scripted event; a line here would be an invented event, not a capture");
+        assertEquals(
+                0L,
+                Files.size(destination),
+                configId + " rendered " + Files.size(destination) + " bytes to " + destination
+                        + ", but its root level admits none of the levels its scripted events carry");
+    }
+
     // -----------------------------------------------------------------------------------------------------------
     // Structural assertions, made while the configuration is still started
     // -----------------------------------------------------------------------------------------------------------
@@ -346,7 +408,8 @@ class Log4j1ConfigParityTest {
     /**
      * Asserts the wiring of one of the four synchronous fixtures: it loaded and started, its root logger carries
      * the expected level and additivity and resolves its single reference, and its file appender writes the
-     * expected destination with the expected conversion pattern and with immediate flush disabled.
+     * expected destination with the expected conversion pattern, append disposition, buffer size and with immediate
+     * flush disabled.
      *
      * @param configuration the started configuration of a booted fixture
      * @param expectedRootLevel level the fixture declares on its root logger
@@ -356,7 +419,7 @@ class Log4j1ConfigParityTest {
             final Configuration configuration, final Level expectedRootLevel, final String expectedPattern) {
         assertConfigurationStarted(configuration);
         assertRootLogger(configuration, expectedRootLevel, SHARED_APPENDER_NAME);
-        assertFileAppender(configuration, SHARED_APPENDER_NAME, SHARED_FILE_NAME, expectedPattern);
+        assertFileAppender(configuration, SHARED_APPENDER_NAME, SHARED_FILE_NAME, expectedPattern, SHARED_APPEND);
     }
 
     /**
@@ -394,7 +457,7 @@ class Log4j1ConfigParityTest {
         final String[] sinkNames = asyncAppender.getAppenderRefStrings();
         assertEquals(1, sinkNames.length, "number of appenders " + ASYNC_APPENDER_NAME + " delegates to");
         assertEquals(ASYNC_SINK_APPENDER_NAME, sinkNames[0], "appender " + ASYNC_APPENDER_NAME + " delegates to");
-        assertFileAppender(configuration, ASYNC_SINK_APPENDER_NAME, ASYNC_FILE_NAME, ASYNC_PATTERN);
+        assertFileAppender(configuration, ASYNC_SINK_APPENDER_NAME, ASYNC_FILE_NAME, ASYNC_PATTERN, ASYNC_APPEND);
     }
 
     /**
@@ -417,9 +480,15 @@ class Log4j1ConfigParityTest {
     }
 
     /**
-     * Asserts a fixture's root logger: its level, its additivity — which neither generation's fixture declared
-     * before the translation stated it explicitly, and which both default to true — and that it carries exactly one
-     * appender reference, by the expected name, resolved to an actual appender.
+     * Asserts a fixture's root logger: its level, its additivity, and that it carries exactly one appender
+     * reference, by the expected name, resolved to an actual appender.
+     * <p>
+     * Additivity is asserted true because every translated fixture states {@code additivity="true"} on its root
+     * explicitly, which is not redundancy: the root logger's builder holds an omitted value in a primitive
+     * {@code boolean} and therefore resolves it to false, while every other logger's builder holds it in a
+     * {@code Boolean} and treats absence as true. The superseded generation's effective value was true, so on a
+     * root logger only an explicit declaration preserves it.
+     * </p>
      */
     private static void assertRootLogger(
             final Configuration configuration, final Level expectedLevel, final String expectedAppenderRef) {
@@ -439,14 +508,29 @@ class Log4j1ConfigParityTest {
 
     /**
      * Asserts one file appender: that it exists under the expected name, is a file appender, started, writes the
-     * expected destination, keeps immediate flush disabled as its superseded form did, and carries a pattern layout
-     * whose conversion pattern matches character for character.
+     * expected destination with the expected append disposition and buffer size, keeps immediate flush disabled as
+     * its superseded form did, and carries a pattern layout whose conversion pattern matches character for
+     * character.
+     * <p>
+     * Append disposition and buffer size are asserted alongside the flush flag because the three together are the
+     * fixture's write disposition, and the two generations reach it by different routes: the superseded one
+     * inferred no-flush from buffering, while this one takes each option independently. A capture cannot see any of
+     * them — a fixture that truncated where it should append, or that lost its buffer and flushed every event,
+     * renders exactly the same bytes.
+     * </p>
+     *
+     * @param configuration the started configuration of a booted fixture
+     * @param appenderName name the fixture binds the appender to
+     * @param expectedFileName destination the fixture declares, as the fixture spells it
+     * @param expectedPattern conversion pattern the fixture declares, compared character for character
+     * @param expectedAppend whether the fixture appends to its destination rather than truncating it
      */
     private static void assertFileAppender(
             final Configuration configuration,
             final String appenderName,
             final String expectedFileName,
-            final String expectedPattern) {
+            final String expectedPattern,
+            final boolean expectedAppend) {
         final Appender appender = configuration.getAppender(appenderName);
         assertNotNull(appender, "the fixture declares no appender named " + appenderName);
         assertTrue(
@@ -460,6 +544,21 @@ class Log4j1ConfigParityTest {
                 fileAppender.getImmediateFlush(),
                 "appender " + appenderName + " must keep immediate flush disabled, as its superseded form did;"
                         + " the two generations do not infer it from each other's options");
+        final FileManager manager = fileAppender.getManager();
+        assertNotNull(manager, "appender " + appenderName + " holds no file manager");
+        final String appendMessage = "append disposition of appender " + appenderName
+                + ", which decides whether a run adds to the previous run's destination or truncates it";
+        if (expectedAppend) {
+            assertTrue(manager.isAppend(), appendMessage);
+        } else {
+            assertFalse(manager.isAppend(), appendMessage);
+        }
+        assertEquals(
+                FILE_BUFFER_SIZE,
+                manager.getBufferSize(),
+                "buffer size of appender " + appenderName + "; the fixture states none, so the default the"
+                        + " effective-configuration tables record is what it must take, and a negative size here"
+                        + " would mean the destination is not buffered at all");
         final Layout<?> layout = fileAppender.getLayout();
         assertNotNull(layout, "appender " + appenderName + " carries no layout");
         assertTrue(

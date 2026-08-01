@@ -27,9 +27,6 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.util.Arrays;
-import java.util.Collections;
-import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import org.apache.logging.log4j.Level;
@@ -40,189 +37,202 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * Rendered-output parity gate for the three logging fixtures owned by this module whose schema was translated from
- * the superseded Log4j 1.x generation to the Log4j 2 schema in place: {@code log4j12-perf.xml},
- * {@code perf-log4j12.xml} and {@code perf-log4j12-async.xml}.
+ * Behaviour-preservation gate for the three superseded logging configurations this module carries, each of which was
+ * translated in place into the Log4j 2 schema: {@code log4j12-perf.xml}, {@code perf-log4j12.xml} and
+ * {@code perf-log4j12-async.xml}.
  * <p>
- * The three fixtures keep their original file names and classpath locations, so every string literal and every
- * command line that names one of them stays valid; only the schema inside each file changed. This class is what
- * turns "the translation preserves behaviour" from a claim into a build gate, and it does so the only way that is
- * admissible evidence: by comparing the <em>bytes the appender wrote</em> against a capture taken from the
- * superseded generation before any dependency was removed. Nothing here reads a configuration attribute, inspects
- * an appender or a layout, or parses the translated XML — a translation that is inspected rather than executed can
- * agree letter for letter and still render differently.
+ * Each fixture is booted in its own isolated logger context, handed the one event its originating arm emitted, and
+ * the file it writes is then compared with the capture committed beside it in {@code /log4j1-parity/}. Those captures
+ * were taken from the superseded generation before the translation landed and cannot be retaken, so they are oracles
+ * rather than knobs: <strong>a divergence is a defect in the translated configuration</strong>, never a reason to
+ * widen the normalizer, relax an assertion or edit a baseline.
  * </p>
  * <p>
- * Each case is independent and follows exactly one sequence:
- * </p>
- * <ol>
- *   <li>remove the destination the fixture is configured to write, so the capture cannot inherit stale lines;</li>
- *   <li>boot the fixture in its <em>own</em> logger context, from its classpath location;</li>
- *   <li>replay the fixed event script recorded for that fixture, under the logger names, levels and messages its
- *       real consumer uses;</li>
- *   <li><em>stop the context</em>, which drains any queue and flushes the writer;</li>
- *   <li>read the produced file, normalize it and compare it with the committed baseline;</li>
- *   <li>remove the destination again, whatever the outcome.</li>
- * </ol>
- * <p>
- * Step four is not optional and it is not a formality. All three fixtures disable immediate flush, two of them
- * additionally buffer their writer, and one hands its events to a background thread before they are ever rendered.
- * A read taken while the context still runs is a race rather than a result. Stopping the context stops the
- * asynchronous wrapper first, which drains its queue into the file appender, and then stops the file appender,
- * which flushes its encoder buffer. Waiting on a timer instead, relaxing immediate flush, shrinking a buffer or
- * replacing the asynchronous wrapper with a synchronous one would each make output appear sooner while destroying
- * the very disposition these fixtures exist to preserve — they serve a benchmark harness, which is a measurement
- * instrument — so none of those is done here and none may be introduced.
+ * <strong>Rendered output is the whole subject.</strong> This class deliberately makes no assertion about the built
+ * configuration, the appenders it resolved or the text of the configuration files. Two configurations can agree on
+ * every structural detail and still render different bytes — through a padding width, a name-abbreviation strategy,
+ * a coupling between buffering and flushing, or a separator that survives an empty context-map key — and it is
+ * exactly those bytes the translation had to preserve. The observed effective-configuration evidence for all three
+ * fixtures, and the rationale for every translation decision, live in the {@code effective-config.adoc} beside the
+ * baselines; this class is the rendered-output gate.
  * </p>
  * <p>
- * <strong>Acceptance is an empty normalized diff.</strong> The normalizer substitutes exactly four rendered
- * elements — timestamp, thread name, source line number and absolute filesystem path — and no fifth may ever be
- * added. Every other byte is compared literally: the level text <em>and its padding width</em>, the logger-name
- * abbreviation, every literal separator, and the rendering of an absent context-map key, which contributes nothing
- * and therefore leaves byte-significant double spaces in all three layouts and one significant trailing space in
- * two of them. Nothing is trimmed, right-stripped or whitespace-collapsed anywhere in this class. A non-empty diff
- * is a defect in the translated fixture; it is never a reason to widen the normalizer, weaken an assertion, wait
- * for output that has not arrived, or edit a committed capture.
+ * Three properties of these particular fixtures shape the code below.
  * </p>
+ * <ul>
+ *   <li><strong>No caller location is rendered.</strong> None of the three patterns carries a class, method or line
+ *       token, so each event is emitted through the plain logging call and the caller frame is unobservable. The
+ *       line-number token remains implemented in {@link #normalize(String)} — the normalizer is shared in intent with
+ *       its peer corpus and must stay comparable to it — and is simply inert here.</li>
+ *   <li><strong>Two fixtures share one destination.</strong> {@code perf-log4j12.xml} and its asynchronous sibling
+ *       both write {@code perftest.log}, and neither the repository's ignore rules nor the licence-audit exclusions
+ *       cover that name, so a leftover copy would surface as an untracked file and fail the audit. Every case
+ *       therefore removes both destinations before it boots anything and again once it has read its capture.</li>
+ *   <li><strong>Stopping is what produces the output.</strong> Every fixture disables immediate flushing and one of
+ *       them wraps its appender asynchronously, so the capture is complete only after the context has been stopped.
+ *       Each case reads its file strictly after closing its context.</li>
+ * </ul>
  * <p>
- * The committed oracle is captured <em>text</em> rather than a live comparison between two logging generations,
- * because the superseded generation is gone from the dependency graph: the captures were taken while it was still
- * present, the capture harness was not committed, and no source file here refers to it. The captures, together
- * with the effective-configuration document that accompanies them under {@code src/test/resources/log4j1-parity},
- * are the whole of the evidence, and this class is their only consumer.
+ * No system property is set, cleared or read anywhere in this class. Handing a non-null configuration location to the
+ * context constructor bypasses property lookup altogether, which is what lets three configurations boot inside one
+ * virtual machine — under forked, randomly ordered execution — without contending over a single global key.
  * </p>
- *
- * @see <a href="https://logging.apache.org/log4j/2.x/manual/migration.html">Migrating from Log4j 1.x</a>
  */
 class Log4j1MigratedConfigParityTest {
 
     // -----------------------------------------------------------------------------------------------------------
-    // Fixture identity: the three translated configurations, their captures and their destinations
+    // The three fixtures. Every configuration keeps the file name and classpath location it had before the
+    // translation, so each is loaded from the classpath root under that name; nothing here is renamed.
     // -----------------------------------------------------------------------------------------------------------
 
-    /** Identifier of the synchronous fixture whose layout renders a five-character level field. */
+    /** Synchronous fixture whose layout pads the level field. Truncates its destination on open. */
     private static final String T8 = "T8";
 
-    /** Identifier of the synchronous, buffered fixture. */
-    private static final String T9 = "T9";
-
-    /** Identifier of the asynchronous fixture, which wraps T9's file appender in a queue. */
-    private static final String T10 = "T10";
-
-    /**
-     * Classpath location of the T8 fixture. The name and the location are the ones it always had: renaming a
-     * fixture would invalidate every literal that selects it, and a fixture dropped into this module's resources
-     * under a discoverable default name would be picked up by every other test in the directory.
-     */
+    /** Classpath location of that fixture. */
     private static final String T8_CONFIG = "/log4j12-perf.xml";
 
-    /** Classpath location of the T9 fixture, likewise unchanged. */
-    private static final String T9_CONFIG = "/perf-log4j12.xml";
-
-    /** Classpath location of the T10 fixture, likewise unchanged. */
-    private static final String T10_CONFIG = "/perf-log4j12-async.xml";
-
-    /** Committed capture for T8: two lines, whose second line is the field-width evidence. */
+    /** Capture committed for that fixture. */
     private static final String T8_BASELINE = "/log4j1-parity/log4j12-perf.baseline.txt";
 
-    /** Committed capture for T9. */
+    /** Buffered synchronous fixture, whose destination is module-relative. */
+    private static final String T9 = "T9";
+
+    /** Classpath location of that fixture. */
+    private static final String T9_CONFIG = "/perf-log4j12.xml";
+
+    /** Capture committed for that fixture. */
     private static final String T9_BASELINE = "/log4j1-parity/perf-log4j12.baseline.txt";
 
-    /**
-     * Committed capture for T10. It is byte-identical to T9's, as it must be — the two fixtures differ only in
-     * whether the same file appender is reached directly or through a queue — and the two captures are
-     * nevertheless kept as separate files, so that a change to either fixture is caught against its own evidence.
-     */
+    /** The same buffered appender behind an asynchronous wrapper, writing the same destination. */
+    private static final String T10 = "T10";
+
+    /** Classpath location of that fixture. */
+    private static final String T10_CONFIG = "/perf-log4j12-async.xml";
+
+    /** Capture committed for that fixture. */
     private static final String T10_BASELINE = "/log4j1-parity/perf-log4j12-async.baseline.txt";
 
+    // -----------------------------------------------------------------------------------------------------------
+    // The scripted events. One per fixture, each reproducing what its originating arm emitted: the same logger
+    // name, the same level and the same message text. None may be renamed, re-levelled or reworded.
+    // -----------------------------------------------------------------------------------------------------------
+
     /**
-     * Destination of the T8 fixture, resolved against the module directory exactly as the fixture declares it.
-     * This is the fixture's own configured path and is deliberately not derived from a build property: what the
-     * gate exercises is the destination the translation carried over.
+     * Logger the comparison harness acquired for its superseded arm.
+     * <p>
+     * The harness gives all three logging generations the identical logger name on purpose, so that the arms remain
+     * comparable. The name is therefore load-bearing and is carried character for character.
+     * </p>
+     */
+    private static final String COMPARISON_LOGGER_NAME = "org.apache.logging.log4j.PerformanceComparison";
+
+    /** Level that arm emitted at. */
+    private static final Level COMPARISON_LEVEL = Level.DEBUG;
+
+    /** Message that arm emitted, reproduced exactly, including its terminating period. */
+    private static final String COMPARISON_MESSAGE = "SEE IF THIS IS LOGGED 2.";
+
+    /** Logger the asynchronous throughput-and-latency runner acquired for its superseded arm. */
+    private static final String RUNNER_LOGGER_NAME = "org.apache.logging.log4j.core.async.perftest.RunLog4j1";
+
+    /**
+     * Level that runner emitted at.
+     * <p>
+     * It is {@code info}, which is the level of the runner's own latency loop. The peer corpus in the benchmark
+     * module records this same runner at {@code debug} for a fixture of its own, and the two are deliberately
+     * <em>not</em> harmonised: each corpus records the level the arm it captured actually emitted.
+     * </p>
+     */
+    private static final Level RUNNER_LEVEL = Level.INFO;
+
+    /** Message that runner emitted, reproduced exactly. */
+    private static final String RUNNER_MESSAGE = "Short msg";
+
+    // -----------------------------------------------------------------------------------------------------------
+    // Destinations and the fresh-destination contract
+    // -----------------------------------------------------------------------------------------------------------
+
+    /**
+     * Destination of the padded-level fixture. It is declared under the build output directory, so a leftover copy
+     * is ignored by the repository and invisible to the licence audit; it is nevertheless removed around every case,
+     * because a stale file would otherwise be read as this fixture's capture.
      */
     private static final Path TESTLOG4J_DESTINATION = Paths.get("target", "testlog4j.log");
 
     /**
-     * Destination shared by the T9 and T10 fixtures, module-relative and outside the build output directory,
-     * exactly as both fixtures declare it. Because it is shared, each case removes it both before and after
-     * itself: no case may rely on another having run first, and none may leave the file behind.
+     * Destination shared by the buffered fixture and its asynchronous sibling. It is declared relative with no
+     * directory, so it lands in the module directory rather than under the build output directory, where neither the
+     * ignore rules nor the licence-audit exclusions cover it.
      */
     private static final Path PERFTEST_DESTINATION = Paths.get("perftest.log");
 
     // -----------------------------------------------------------------------------------------------------------
-    // The fixed event script, embedded here rather than kept as a resource
+    // The normalizer. Exactly four rendered elements are substituted, and never a fifth.
+    // -----------------------------------------------------------------------------------------------------------
+
+    /** Wall-clock timestamp rendered by the date token, in the default pattern of that token. */
+    private static final Pattern TIMESTAMP = Pattern.compile("\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}[,.]\\d{3}");
+
+    /** Placeholder substituted for a rendered timestamp. */
+    private static final String TIMESTAMP_TOKEN = "<TS>";
+
+    /**
+     * Bracketed thread name, as each of the three patterns renders it.
+     * <p>
+     * The match cannot cross a line and cannot contain a closing bracket, and none of the three scripted messages
+     * contains a bracket of either kind, so the only run this can match is the thread field itself. Substituting the
+     * whole bracketed run rather than its contents keeps the substitution idempotent, which is what lets an
+     * already-normalized baseline be normalized again for symmetry.
+     * </p>
+     */
+    private static final Pattern BRACKETED_THREAD = Pattern.compile("\\[[^\\]\\n]*\\]");
+
+    /** Placeholder substituted for a rendered bracketed thread name. */
+    private static final String THREAD_TOKEN = "[<THREAD>]";
+
+    /**
+     * Source line number, recognised only where a caller-location pattern places one.
+     * <p>
+     * A source line number is an artefact of the editing a migration performs and is the one rendered element these
+     * corpora tolerate normalizing. None of the three fixtures here renders caller location, so this substitution is
+     * inert; it is retained so that this normalizer stays token-for-token comparable with the peer corpus that does
+     * render it, and so that adding a location-rendering fixture needs no new tolerance.
+     * </p>
+     */
+    private static final Pattern SOURCE_LINE_NUMBER = Pattern.compile(":\\d+(?=  - )");
+
+    /** Placeholder substituted for a rendered source line number, separator included. */
+    private static final String SOURCE_LINE_TOKEN = ":<LINE>";
+
+    /**
+     * Absolute filesystem path, whether rendered with forward or backward separators.
+     * <p>
+     * The lookbehind requires the match to begin at the start of the input or after whitespace or an opening bracket
+     * or parenthesis, so a path is only recognised where one could actually have been rendered. None of the three
+     * fixtures renders a path — no throwable, no file token and no path-valued context-map key appears — so this
+     * substitution is inert here too, and is retained for the same reason as the line-number token.
+     * </p>
+     */
+    private static final Pattern ABSOLUTE_PATH =
+            Pattern.compile("(?<![^\\s(\\[])(?:[A-Za-z]:[\\\\/]|/)[\\w.+~@%$-]+(?:[\\\\/][\\w.+~@%$-]+)*[\\\\/]?");
+
+    /** Placeholder substituted for a rendered absolute path. */
+    private static final String PATH_TOKEN = "<PATH>";
+
+    /** Prefix of every context name, so a leaked context is attributable to this gate. */
+    private static final String CONTEXT_NAME_PREFIX = "log4j1-parity-";
+
+    // -----------------------------------------------------------------------------------------------------------
+    // The fresh-destination contract, applied around every case
     // -----------------------------------------------------------------------------------------------------------
 
     /**
-     * Logger name used by the T8 fixture's consumer.
+     * Removes both destinations before a fixture boots.
      * <p>
-     * That consumer acquires <em>three</em> loggers, one per logging generation, and gives all three this
-     * identical name, derived from the same class. It is deliberate rather than a copy-paste defect: the class
-     * exists to compare the generations against each other and the arms stay comparable only while they log under
-     * a shared name. The name is therefore carried across character for character, and one name serving several
-     * generations is never treated as something to disambiguate.
-     * </p>
-     */
-    private static final String T8_LOGGER = "org.apache.logging.log4j.PerformanceComparison";
-
-    /**
-     * Logger name used by the consumer of both the T9 and the T10 fixtures, which acquires it from its own runtime
-     * class and emits every one of its three statements at {@code INFO}.
-     */
-    private static final String T9_AND_T10_LOGGER = "org.apache.logging.log4j.core.async.perftest.RunLog4j1";
-
-    /**
-     * The fixed event script: every event replayed by this gate, in script order.
-     * <p>
-     * The script lives here as constants rather than as a resource for two independent reasons. The capture
-     * directory beside the baselines holds exactly the three captures and their effective-configuration document,
-     * and no fourth kind of file; and the sibling module that keeps an equivalent script as a resource cannot be
-     * depended upon from here — it is itself acquiring a test-scope dependency on this module, so the reverse edge
-     * would be a dependency cycle; it neither installs nor deploys and builds no test artefact, so there is
-     * nothing to depend on; and it is built after this module, so the edge would also reverse reactor order.
-     * </p>
-     * <p>
-     * Three of the four events are the emissions the fixtures' real consumers make, carried across with their
-     * logger name, their level and their fully rendered message unchanged. The message of the first is the
-     * <em>result</em> of the concatenation its consumer performs: no argument anywhere in this migration was
-     * converted to a parameterized form, because the parameterized arms already exist as separate benchmarks and
-     * converting would destroy the comparison the concatenating arms exist to make.
-     * </p>
-     * <p>
-     * The second event is the one addition, and it is a control rather than a consumer emission. T8's layout
-     * renders the level through a five-character minimum field, and its consumer emits at {@code DEBUG}, which is
-     * exactly five characters and therefore needs no padding: a capture of that event alone renders identically
-     * whether the field width is configured or not, so deleting the width from the translated fixture would leave
-     * the capture unchanged and the gate would keep passing. Replaying one further event at {@code WARN} — four
-     * characters, right-aligned into the field, on the same logger name so that the level is the only difference
-     * between the two captured lines — closes that hole. It re-levels nothing, since the consumer's own
-     * {@code DEBUG} event is still replayed first and unchanged, and it changes no appender option, no root level,
-     * no buffer size and no flush setting. The single leading space it produces is the whole of the evidence that
-     * the field width survived translation, and it is why the T8 comparison must cover the entire capture and
-     * never merely its first line.
-     * </p>
-     * <p>
-     * The list is unmodifiable and holds immutable values, so the script cannot be perturbed by a case and is safe
-     * under forked, randomly ordered execution.
-     * </p>
-     */
-    private static final List<ScriptedEvent> SCRIPT = Collections.unmodifiableList(Arrays.asList(
-            new ScriptedEvent(T8, T8_LOGGER, Level.DEBUG, "SEE IF THIS IS LOGGED 2."),
-            new ScriptedEvent(T8, T8_LOGGER, Level.WARN, "Field width control event"),
-            new ScriptedEvent(T9, T9_AND_T10_LOGGER, Level.INFO, "Short msg"),
-            new ScriptedEvent(T10, T9_AND_T10_LOGGER, Level.INFO, "Short msg")));
-
-    // -----------------------------------------------------------------------------------------------------------
-    // The fresh-destination contract
-    // -----------------------------------------------------------------------------------------------------------
-
-    /**
-     * Removes both destinations before every case.
-     * <p>
-     * This is the only safe moment to do it: no context holds a file manager yet, so the removal cannot interrupt
-     * a capture, and the manager a fixture opens afterwards is keyed by its destination name and reference
-     * counted. Two of the three fixtures write the same file, and the cases are randomly ordered, so a stale file
-     * would otherwise let one case's capture carry another's lines — intermittently, and only for some orders.
+     * This runs before rather than after the boot on purpose: the file managers are keyed by destination name and
+     * reference-counted, so a stale file must be removed while no context holds its manager. Two of the three
+     * fixtures share one destination and all three truncate on open, but a removal that depended on either fact
+     * would silently stop protecting the comparison if a fixture's options were ever translated differently.
      * </p>
      */
     @BeforeEach
@@ -231,29 +241,15 @@ class Log4j1MigratedConfigParityTest {
     }
 
     /**
-     * Removes both destinations after every case, whether it passed or failed.
-     * <p>
-     * It runs after the case's own try-with-resources block has stopped the context, so a file is never removed
-     * while its manager is still open. Leaving a capture behind is not merely untidy: the module-relative
-     * destination sits outside the build output directory and is covered neither by the repository's ignore rules
-     * nor by the licence audit's exclusions, so a leftover copy would surface as an unlicensed file and fail that
-     * audit.
-     * </p>
+     * Removes both destinations once a capture has been read, so no case leaves a file behind for the next one or for
+     * the licence audit.
      */
     @AfterEach
     void removeDestinationsAfterCapture() throws IOException {
         removeDestinations();
     }
 
-    /**
-     * Removes both destinations if they are present.
-     * <p>
-     * The removal is idempotent and reports whether anything was there to remove. Both answers are legitimate — a
-     * stale capture before a boot, nothing at all after a clean case — so neither is asserted. A destination that
-     * exists but cannot be removed raises, which is the outcome that does matter, because it means a manager is
-     * still holding the file.
-     * </p>
-     */
+    /** Removes both destinations. The removal is idempotent, so either outcome is legitimate and neither is asserted. */
     private static void removeDestinations() throws IOException {
         Files.deleteIfExists(TESTLOG4J_DESTINATION);
         Files.deleteIfExists(PERFTEST_DESTINATION);
@@ -264,113 +260,85 @@ class Log4j1MigratedConfigParityTest {
     // -----------------------------------------------------------------------------------------------------------
 
     /**
-     * The two-line synchronous capture: the consumer's own event, and the control that makes the five-character
-     * level field observable. The whole capture is compared, both lines of it, for the reason given on the script.
+     * The padded-level capture.
+     * <p>
+     * Its layout pads the level to a minimum of five characters and renders a context-map key that this event never
+     * populates, so the committed line carries a five-character level followed by the <em>double</em> space that the
+     * empty key leaves in front of the separator. Both are compared literally: nothing is trimmed and no run of
+     * spaces is collapsed.
+     * </p>
      */
     @Test
     @DisplayName("log4j12-perf.xml renders its committed baseline byte for byte")
     void log4j12PerfRendersItsBaseline() throws Exception {
-        try (final LoggerContext context = startContext(T8, T8_CONFIG)) {
-            replay(context, T8);
+        try (LoggerContext context = startContext(T8, T8_CONFIG)) {
+            emit(context, COMPARISON_LOGGER_NAME, COMPARISON_LEVEL, COMPARISON_MESSAGE);
         }
         assertRenderedParity(T8, T8_BASELINE, TESTLOG4J_DESTINATION);
     }
 
     /**
-     * The synchronous, buffered capture. Its fixture is the one whose superseded form declared buffered writing
-     * but no flush setting, because that generation inferred one from the other; this generation does not, so the
-     * translation states both. Whether the inference survived is not asserted by reading those attributes — it is
-     * settled by the fact that a capture appears at all, and appears in full, only once the context has stopped.
+     * The buffered synchronous capture.
+     * <p>
+     * The superseded appender coupled buffering to flushing, disabling immediate flush as soon as buffering was
+     * requested, whereas the replacement treats the two as independent options that both default to on. The
+     * translated fixture therefore has to state the flush disposition explicitly, and this case is what proves it
+     * did: the capture is read only after the context has been stopped, which is what flushes the buffer.
+     * </p>
+     * <p>
+     * Its layout renders an unpadded level, a context-map key this event never populates — leaving a double space
+     * before the message — and a literal space between the message and the line separator. That trailing space is
+     * significant and is compared like every other byte.
+     * </p>
      */
     @Test
-    @DisplayName("perf-log4j12.xml renders its committed baseline byte for byte")
+    @DisplayName("perf-log4j12.xml renders its committed baseline byte for byte, trailing space included")
     void perfLog4j12RendersItsBaseline() throws Exception {
-        try (final LoggerContext context = startContext(T9, T9_CONFIG)) {
-            replay(context, T9);
+        try (LoggerContext context = startContext(T9, T9_CONFIG)) {
+            emit(context, RUNNER_LOGGER_NAME, RUNNER_LEVEL, RUNNER_MESSAGE);
         }
         assertRenderedParity(T9, T9_BASELINE, PERFTEST_DESTINATION);
     }
 
     /**
-     * The asynchronous capture, and the case that most depends on the ordering this class imposes: its event is
-     * handed to a background thread, rendered into a buffered writer and only then flushed, all of which happens
-     * while the context is stopping. The rendered thread name is the <em>producing</em> thread, recorded when the
-     * event was constructed rather than when it was written, so the capture is comparable with its synchronous
-     * twin token for token.
+     * The asynchronous capture. Its root logger reaches the same buffered appender through an asynchronous wrapper,
+     * so the event is handed to a background thread and the file stays empty until the context is stopped: stopping
+     * drains the wrapper's queue into the appender and then flushes the appender's buffer. Read any earlier, the
+     * capture would be a queue still in flight. The rendered bytes must be identical to those of the synchronous
+     * fixture, because interposing the wrapper is required to change delivery and nothing else.
      */
     @Test
-    @DisplayName("perf-log4j12-async.xml renders its committed baseline byte for byte")
+    @DisplayName("perf-log4j12-async.xml renders its committed baseline byte for byte through its async wrapper")
     void perfLog4j12AsyncRendersItsBaseline() throws Exception {
-        try (final LoggerContext context = startContext(T10, T10_CONFIG)) {
-            replay(context, T10);
+        try (LoggerContext context = startContext(T10, T10_CONFIG)) {
+            emit(context, RUNNER_LOGGER_NAME, RUNNER_LEVEL, RUNNER_MESSAGE);
         }
         assertRenderedParity(T10, T10_BASELINE, PERFTEST_DESTINATION);
     }
 
     // -----------------------------------------------------------------------------------------------------------
-    // The comparison itself
+    // Booting, emitting and comparing
     // -----------------------------------------------------------------------------------------------------------
 
     /**
-     * Compares one capture with its committed baseline through the normalizer.
+     * Boots one configuration in a logger context of its own, from the configuration's classpath location.
      * <p>
-     * Both sides are read and normalized by identical code, so the comparison cannot be skewed by how either side
-     * was obtained; the normalizer is idempotent, which is what makes normalizing an already-normalized baseline a
-     * safe way to guarantee that symmetry. The presence of the file is asserted first, so a fixture that never
-     * opened its destination is reported as such instead of surfacing as a missing-file exception. The whole file
-     * is compared — never a line of it, never a prefix.
+     * The location is passed as a non-null URI, which is what makes the context independent of every configuration
+     * system property: the factory consults those properties only when it is given no location, so three fixtures
+     * can be booted in one virtual machine without any of them observing or disturbing global state. The context is
+     * named after the fixture, so a leaked context is attributable.
+     * </p>
+     * <p>
+     * The returned context is started and is the caller's to close; closing it stops it, and stopping is what drains
+     * an asynchronous queue and flushes a buffered writer. If the boot itself fails the partially started context is
+     * stopped here rather than left running, because a context that was never returned cannot be closed by anyone
+     * else.
      * </p>
      *
-     * @param configId identifier of the fixture under test, named in every failure message
-     * @param baselineResource classpath location of the committed capture
-     * @param destination file the fixture was configured to write
-     * @throws IOException if the capture or the baseline cannot be read
-     */
-    private static void assertRenderedParity(
-            final String configId, final String baselineResource, final Path destination) throws IOException {
-        assertTrue(
-                Files.isRegularFile(destination),
-                configId + " produced no capture at " + destination
-                        + "; either the fixture was not located or its appender never opened its destination");
-        final String expected = normalize(readResource(baselineResource));
-        final String actual = normalize(readFile(destination));
-        assertEquals(
-                expected,
-                actual,
-                configId + " diverged from the committed baseline " + baselineResource
-                        + ". A non-empty normalized diff is a defect in the translated fixture, and never a reason"
-                        + " to widen the normalizer, relax this assertion or edit the baseline");
-    }
-
-    // -----------------------------------------------------------------------------------------------------------
-    // Booting a fixture, and replaying its events
-    // -----------------------------------------------------------------------------------------------------------
-
-    /** Prefix of the name given to each booted context, so that no two fixtures share a context identity. */
-    private static final String CONTEXT_NAME_PREFIX = "log4j1-parity-";
-
-    /**
-     * Boots one fixture in its own logger context, configured from its classpath location.
-     * <p>
-     * <strong>Handing a non-null configuration location to the constructor is mandatory, not stylistic.</strong>
-     * The configuration factory guards its entire system-property-reading block on the location being absent, so a
-     * non-null location makes the context property-independent by construction: no configuration-file property of
-     * any generation is consulted, and none needs to be set. That is what allows three fixtures to boot inside one
-     * virtual machine, under forked and randomly ordered execution, without contending over a single global key —
-     * and it is why this class sets, clears and reads no system property at all. A global selector would leak into
-     * every other test in the module.
-     * </p>
-     * <p>
-     * The returned context is started and is the caller's to close; every case closes it with try-with-resources,
-     * which stops it on the failure path too, and stopping is what drains a queue and flushes a writer. If the
-     * boot itself fails, the partially started context is stopped here rather than left running, because a context
-     * that was never handed back cannot be closed by anyone else.
-     * </p>
-     *
-     * @param configId identifier of the fixture, used to name the context
-     * @param configResourcePath classpath location of the fixture
+     * @param configId the fixture id, used to name the context
+     * @param configResourcePath absolute classpath path of the configuration, under its original name
      * @return the started context
-     * @throws URISyntaxException if the located fixture cannot be expressed as a URI
+     * @throws URISyntaxException if the located resource cannot be expressed as a URI
      */
     private static LoggerContext startContext(final String configId, final String configResourcePath)
             throws URISyntaxException {
@@ -390,39 +358,89 @@ class Log4j1MigratedConfigParityTest {
     }
 
     /**
-     * Replays one fresh pass of a fixture's scripted events through the supplied context, in script order.
+     * Emits one scripted event through the supplied context.
      * <p>
-     * Each event is emitted as a level and a single, fully rendered string, which is the plainest route the logging
-     * API offers: none of the three layouts in this corpus renders the caller's class, method or line, so nothing
-     * here fabricates a caller frame, and a format string with parameters is never used because the recorded
-     * messages are results rather than templates. Level filtering applies on this route exactly as it does to the
-     * fixtures' real consumers.
-     * </p>
-     * <p>
-     * This method performs no draining and no flushing of its own. The caller must stop the context before reading
-     * the capture.
+     * The logger is obtained from the context rather than from the static factory, so the event is guaranteed to
+     * reach the fixture under test and not whatever configuration happens to be current. The level is supplied
+     * explicitly instead of choosing a level-named method, which keeps one emission path for all three cases; that
+     * choice is unobservable here because none of the three layouts renders a class, a method or a line number, so
+     * no caller frame is ever resolved.
      * </p>
      *
-     * @param context a started, isolated context booted from the fixture under test
-     * @param configId identifier of the fixture whose events are to be replayed
+     * @param context the started context that owns the fixture
+     * @param loggerName the logger name to emit on, carried verbatim from the originating arm
+     * @param level the level to emit at
+     * @param message the message text to emit, rendered as-is
      */
-    private static void replay(final LoggerContext context, final String configId) {
-        for (final ScriptedEvent event : SCRIPT) {
-            if (configId.equals(event.configId())) {
-                context.getLogger(event.loggerName()).log(event.level(), event.message());
-            }
-        }
+    private static void emit(
+            final LoggerContext context, final String loggerName, final Level level, final String message) {
+        context.getLogger(loggerName).log(level, message);
     }
 
-    // -----------------------------------------------------------------------------------------------------------
-    // Reading captures and baselines
-    // -----------------------------------------------------------------------------------------------------------
+    /**
+     * Compares one capture with its committed baseline through the normalizer.
+     * <p>
+     * Both sides are read and normalized by identical code, so the comparison cannot be skewed by how either side
+     * was obtained; the normalizer is idempotent, which is what makes normalizing an already-normalized baseline a
+     * safe way to guarantee that symmetry. The presence of the file is asserted first, so a fixture that never opened
+     * its destination is reported as such rather than surfacing as a missing-file exception.
+     * </p>
+     *
+     * @param configId the fixture id, named in every failure message
+     * @param baselineResource absolute classpath path of the committed baseline
+     * @param destination file the fixture was configured to write
+     * @throws IOException if the baseline or the capture cannot be read
+     */
+    private static void assertRenderedParity(
+            final String configId, final String baselineResource, final Path destination) throws IOException {
+        assertTrue(
+                Files.isRegularFile(destination),
+                configId + " produced no capture at " + destination
+                        + "; either the fixture did not load or its appender never opened its destination");
+        final String expected = normalize(readResource(baselineResource));
+        final String actual = normalize(readFile(destination));
+        assertEquals(
+                expected,
+                actual,
+                configId + " diverged from the committed baseline " + baselineResource
+                        + ". A non-empty normalized diff is a defect in the translated configuration, and never a"
+                        + " reason to widen the normalizer, relax this assertion or edit the baseline");
+    }
 
     /**
-     * Reads a classpath resource as text, by resolving it to a file and deferring to {@link #readFile(Path)}, so
-     * that a baseline and a capture are always decoded by identical code.
+     * Substitutes the four non-deterministic or migration-dependent rendered elements, and nothing else.
+     * <p>
+     * Every other byte survives to be compared literally: the level text and its padding width, the logger-name
+     * abbreviation, every literal separator, the byte-significant double spaces an absent context-map key leaves
+     * behind, and the significant trailing space one of the patterns places before the line separator. Nothing is
+     * trimmed, no run of spaces is collapsed and no line ending is rewritten.
+     * </p>
+     * <p>
+     * The substitutions are applied in a fixed order, timestamp first, so that a later pattern cannot match text an
+     * earlier one has already replaced. Each is idempotent, so applying the whole normalizer to output it has
+     * already produced changes nothing — which is why it is safe to run it over the committed baseline as well as
+     * over the capture.
+     * </p>
      *
-     * @param resourcePath classpath location of the resource
+     * @param rendered rendered output, read whole and untrimmed
+     * @return the normalized form
+     */
+    private static String normalize(final String rendered) {
+        String normalized = TIMESTAMP.matcher(rendered).replaceAll(Matcher.quoteReplacement(TIMESTAMP_TOKEN));
+        normalized = BRACKETED_THREAD.matcher(normalized).replaceAll(Matcher.quoteReplacement(THREAD_TOKEN));
+        normalized = SOURCE_LINE_NUMBER.matcher(normalized).replaceAll(Matcher.quoteReplacement(SOURCE_LINE_TOKEN));
+        return ABSOLUTE_PATH.matcher(normalized).replaceAll(Matcher.quoteReplacement(PATH_TOKEN));
+    }
+
+    /**
+     * Reads a classpath resource as text.
+     * <p>
+     * The whole byte content is decoded in one step with an explicit charset. Reading by lines is deliberately
+     * avoided: it would discard whether the content ends with a line separator, and that disposition is part of what
+     * the comparison asserts.
+     * </p>
+     *
+     * @param resourcePath absolute classpath path of the resource
      * @return the decoded content, with no trimming of any kind
      * @throws IOException if the resource cannot be read
      */
@@ -440,13 +458,8 @@ class Log4j1MigratedConfigParityTest {
     }
 
     /**
-     * Reads a file as text.
-     * <p>
-     * The whole byte content is decoded in one step with an explicit charset. Reading by lines is deliberately
-     * avoided: it would discard whether the content ends with a line separator, and that disposition is part of
-     * what the comparison asserts. A zero-length file yields an empty string rather than an empty line, and no
-     * character — least of all a trailing space — is removed.
-     * </p>
+     * Reads a file as text, using the same decoding and the same newline discipline as {@link #readResource(String)},
+     * so that a capture and a baseline are always read by identical code.
      *
      * @param file the file to read
      * @return the decoded content, with no trimming of any kind
@@ -454,214 +467,5 @@ class Log4j1MigratedConfigParityTest {
      */
     private static String readFile(final Path file) throws IOException {
         return new String(Files.readAllBytes(file), StandardCharsets.UTF_8);
-    }
-
-    // -----------------------------------------------------------------------------------------------------------
-    // The output normalizer: exactly four tokens, deliberately minimal
-    // -----------------------------------------------------------------------------------------------------------
-
-    /** Replacement for a rendered wall-clock timestamp. */
-    private static final String TIMESTAMP_TOKEN = "<TS>";
-
-    /** Replacement for a rendered thread name, brackets retained. */
-    private static final String THREAD_TOKEN = "[<THREAD>]";
-
-    /** Replacement for a rendered source line number, the preceding colon retained. */
-    private static final String LINE_TOKEN = ":<LINE>";
-
-    /** Replacement for a rendered absolute filesystem path. */
-    private static final String PATH_TOKEN = "<PATH>";
-
-    /**
-     * The default date format, matched only at the start of a line. The fractional separator is accepted in either
-     * of its two spellings so that the anchor cannot be defeated by a formatter variant; this is one token either
-     * way.
-     */
-    private static final Pattern TIMESTAMP = Pattern.compile("\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}[,.]\\d{3}");
-
-    /**
-     * A bracketed thread name. Only the <em>first</em> occurrence on a timestamp-bearing line is replaced: the
-     * thread field always precedes the message in all three layouts, so a message that happened to contain
-     * brackets of its own would survive untouched.
-     */
-    private static final Pattern BRACKETED_THREAD = Pattern.compile("\\[[^\\]\\n]*\\]");
-
-    /**
-     * A rendered source line number, anchored on the separator that follows it in a layout that renders caller
-     * location. Anchoring it this tightly is what keeps line numbers that are part of the compared output out of
-     * its reach. <em>Inert in this corpus:</em> none of the three fixtures renders the caller's class, method or
-     * line, so the token never fires here. It is retained so that this module's normalizer stays byte-identical to
-     * the sibling module's, and so that the two corpora cannot drift apart.
-     */
-    private static final Pattern SOURCE_LINE_NUMBER = Pattern.compile(":\\d+(?=  - )");
-
-    /**
-     * A genuinely absolute filesystem path: a root-anchored path with at least one segment, or a drive-letter
-     * path, in either case starting at a token boundary so that a relative destination — such as this corpus's
-     * build-output capture or its module-relative one — is never matched.
-     */
-    private static final Pattern ABSOLUTE_PATH =
-            Pattern.compile("(?<![^\\s(\\[])(?:[A-Za-z]:[\\\\/]|/)[\\w.+~@%$-]+(?:[\\\\/][\\w.+~@%$-]+)*[\\\\/]?");
-
-    /**
-     * Normalizes rendered output so that a capture can be compared with a committed baseline.
-     * <p>
-     * Exactly four rendered elements are substituted, and no fifth may ever be added:
-     * </p>
-     * <ol>
-     *   <li>the timestamp, which is wall-clock;</li>
-     *   <li>the thread name, which is assigned by whatever ran the emission — always the <em>producing</em>
-     *       thread, because the name is recorded into the event when the event is constructed, so the
-     *       asynchronous fixture renders the emitter and never the dispatcher;</li>
-     *   <li>the source line number, which is an artefact of the editing this migration performs; the class and
-     *       method components rendered beside it are <em>not</em> normalized;</li>
-     *   <li>absolute filesystem paths, which are workspace-dependent.</li>
-     * </ol>
-     * <p>
-     * <strong>Everything else is compared byte for byte</strong>: the level text and its padding width, the
-     * logger-name abbreviation, every literal separator, and the rendering of an absent context-map key — which
-     * renders as nothing and therefore produces byte-significant double spaces and, in two of the three fixtures,
-     * one significant trailing space. Nothing is trimmed, no run of spaces is collapsed and no line separator is
-     * rewritten: captures and baselines are both produced on the project's documented build baseline, so a
-     * line-separator token would be a fifth token and is forbidden.
-     * </p>
-     * <p>
-     * The function is pure and idempotent: it holds no state, so it is safe under forked, randomly ordered
-     * execution, and normalizing an already-normalized baseline returns it unchanged. Lines are split and rejoined
-     * on the line-feed character with a negative limit, so the presence or absence of a final line separator
-     * survives intact.
-     * </p>
-     *
-     * @param rendered captured or baseline text, never {@code null}
-     * @return the normalized text
-     */
-    private static String normalize(final String rendered) {
-        if (rendered.isEmpty()) {
-            return rendered;
-        }
-        final String[] lines = rendered.split("\n", -1);
-        final StringBuilder normalized = new StringBuilder(rendered.length());
-        for (int index = 0; index < lines.length; index++) {
-            if (index > 0) {
-                normalized.append('\n');
-            }
-            normalized.append(normalizeLine(lines[index]));
-        }
-        return normalized.toString();
-    }
-
-    /**
-     * Normalizes one line.
-     * <p>
-     * The thread and line-number tokens are confined to lines that carry a timestamp. Every layout in this corpus
-     * that renders a thread name also opens with the timestamp, so the restriction costs nothing and it forecloses
-     * a real hazard: a rendered message that contains brackets of its own.
-     * </p>
-     */
-    private static String normalizeLine(final String line) {
-        String result = line;
-        final Matcher timestamp = TIMESTAMP.matcher(result);
-        final boolean timestamped;
-        if (timestamp.lookingAt()) {
-            result = TIMESTAMP_TOKEN + result.substring(timestamp.end());
-            timestamped = true;
-        } else {
-            // An already-normalized line is recognised so that normalization stays idempotent.
-            timestamped = result.startsWith(TIMESTAMP_TOKEN);
-        }
-        if (timestamped) {
-            result = replaceFirst(result, BRACKETED_THREAD, THREAD_TOKEN);
-            result = replaceFirst(result, SOURCE_LINE_NUMBER, LINE_TOKEN);
-        }
-        return replaceAll(result, ABSOLUTE_PATH, PATH_TOKEN);
-    }
-
-    /**
-     * Replaces the first match of a pattern by index surgery.
-     * <p>
-     * Index surgery is used in preference to the regular-expression replacement methods, because a replacement
-     * string is otherwise interpreted: a captured backslash or dollar sign in rendered output would either be
-     * consumed or raise an error. Splicing the literal token in cannot misfire.
-     * </p>
-     */
-    private static String replaceFirst(final String input, final Pattern pattern, final String replacement) {
-        final Matcher matcher = pattern.matcher(input);
-        if (!matcher.find()) {
-            return input;
-        }
-        return input.substring(0, matcher.start()) + replacement + input.substring(matcher.end());
-    }
-
-    /** Replaces every match of a pattern by index surgery, scanning left to right without rescanning a token. */
-    private static String replaceAll(final String input, final Pattern pattern, final String replacement) {
-        final Matcher matcher = pattern.matcher(input);
-        if (!matcher.find()) {
-            return input;
-        }
-        final StringBuilder result = new StringBuilder(input.length());
-        int copiedUpTo = 0;
-        do {
-            result.append(input, copiedUpTo, matcher.start()).append(replacement);
-            copiedUpTo = matcher.end();
-        } while (matcher.find());
-        result.append(input, copiedUpTo, input.length());
-        return result.toString();
-    }
-
-    // -----------------------------------------------------------------------------------------------------------
-    // One scripted event
-    // -----------------------------------------------------------------------------------------------------------
-
-    /**
-     * One scripted event: an immutable value carrying the fixture it belongs to, the logger name it is emitted
-     * under, its level and its fully rendered message.
-     */
-    private static final class ScriptedEvent {
-
-        private final String configId;
-
-        private final String loggerName;
-
-        private final Level level;
-
-        private final String message;
-
-        ScriptedEvent(final String configId, final String loggerName, final Level level, final String message) {
-            this.configId = configId;
-            this.loggerName = loggerName;
-            this.level = level;
-            this.message = message;
-        }
-
-        /** Identifier of the fixture this event belongs to. */
-        String configId() {
-            return configId;
-        }
-
-        /**
-         * Logger name, carried character for character from the fixture's consumer. It is never "improved": the
-         * name is the logger's identity, and therefore its configured level and its appender wiring.
-         */
-        String loggerName() {
-            return loggerName;
-        }
-
-        /** Level the event is emitted at, exactly as scripted. */
-        Level level() {
-            return level;
-        }
-
-        /**
-         * Fully rendered message text, emitted as a single string. A message its consumer built by concatenation
-         * is carried here as the concatenated result and is deliberately not converted to a parameterized form.
-         */
-        String message() {
-            return message;
-        }
-
-        @Override
-        public String toString() {
-            return configId + '|' + loggerName + '|' + level + '|' + message;
-        }
     }
 }

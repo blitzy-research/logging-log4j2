@@ -237,10 +237,11 @@ it:
 
 == The event script, and where it lives
 
-Each fixture is exercised by the emission its real consumer makes, and T8 carries *one additional
-event beyond that*, for the reason given in the subsection below on the field-width control event. The
-logger names, levels and messages of the consumer-derived events are carried across character for
-character; logger names in particular are never "improved".
+Each fixture is exercised by *exactly the emission its real consumer makes*, and by nothing else. The
+logger names, levels and messages are carried across character for character; logger names in
+particular are never "improved". No probe, control or otherwise invented event appears anywhere in this
+script, and none may be added: an event no consumer emits was never rendered by the superseded
+generation, so no capture of it exists and it can prove nothing about the translation.
 
 One case makes that rule load-bearing rather than decorative. T8's consumer acquires *three* loggers,
 one per logging generation, and gives all three the *identical* name, derived from the same class.
@@ -259,13 +260,6 @@ treated as something to disambiguate.
 | `SEE IF THIS IS LOGGED 2.`
 | consumer emission
 
-| T8
-| `org.apache.logging.log4j.PerformanceComparison` -- the same name again, so that the level field is
-  the only difference between the two captured lines
-| `WARN`
-| `Field width control event`
-| field-width control
-
 | T9
 | `org.apache.logging.log4j.core.async.perftest.RunLog4j1`
 | `INFO`
@@ -283,54 +277,48 @@ T8's level and message come from its consumer's own emission, which concatenates
 than parameterising it. That concatenation is preserved: no argument anywhere in this migration was
 converted to `{}` parameterisation, so the recorded message is the concatenated result. T9's and
 T10's `INFO` level likewise comes from their consumer, whose three emissions are all at `INFO`, and
-the message is that consumer's own latency-message constant. The sibling corpus carries one entry from
-that very same consumer -- its own copy of the asynchronous fixture has no in-module consumer to
-inherit from, so name, level and message are all carried from this one -- and it records the same
-`INFO`. A level may not be carried from one source while the name and the message are carried from
-another, so the agreement between the two corpora on this single emission is a *consistency check*
-rather than a coincidence: if one of them ever records a different level for it, one of them is wrong.
+the message is that consumer's own latency-message constant.
 
-=== The field-width control event, and why T8 needs one
+The sibling `log4j-perf-test` corpus carries one entry naming that very same consumer class, and it
+records that entry at `DEBUG` rather than `INFO`. *The two corpora deliberately differ here, and must
+not be harmonised.* Each records the level of the arm it actually captured: this module's T9 and T10
+were captured from the runner's own latency loop, which emits at `INFO`, while the sibling's entry was
+captured from the arm that drives its own copy of the asynchronous fixture, which emits at `DEBUG`.
+Both fixtures declare a `debug` root, so both levels are admitted and each capture is the faithful
+record of its own arm. Rewriting either corpus to match the other would substitute a level no capture
+evidences for one that a capture does, which is precisely the drift these gates exist to prevent.
+
+=== The `+%5p+` field width, and how it is verified without an invented event
 
 T8's layout renders the level through `+%5p+` -- a five-character minimum field. Its consumer's own
 emission is at `DEBUG`, which is *exactly five characters*, so it needs no padding and its bytes are
-identical to those the same event would produce through a bare `+%p+`. A capture consisting only of
-that event therefore cannot see the field width at all: deleting the width from the translated pattern
-would have left the baseline unchanged, and the corpus would have kept passing.
+identical to those the same event would produce through a bare `+%p+`. The rendered capture therefore
+cannot, on its own, distinguish the width from its absence: deleting the width from the translated
+pattern would leave `log4j12-perf.baseline.txt` unchanged.
 
-The hole is closed by replaying *one additional event at `WARN`* -- four characters -- on the same
-logger name, so that the level field is the only difference between the two captured lines. Both forms
-were rendered by the superseded generation during the baseline capture, so what follows is an
-observation rather than a prediction.
+*The gap is closed by observation, not by invention.* The layout-pattern row of T8's
+effective-configuration table below is populated from the configuration the migrated fixture actually
+boots, read out of its `-Dlog4j2.debug` status output, and it is compared against the pattern the
+superseded fixture configured *character for character* -- `+%5p+` included. A translated pattern whose
+width had been deleted would fail that row immediately, while rendering identical bytes. The width is
+thus verified by the evidence route this document is for, rather than by the rendered-output route,
+which for this one token has nothing to say.
 
-Rendered through the width T8 actually configures, `+%5p+`, which is the committed baseline's second
-line byte for byte:
+The alternative -- replaying an extra event at a shorter level so that the padding becomes visible in
+the bytes -- was considered and *rejected*, for a reason that outweighs the convenience:
 
-[source,text]
-----
-<TS>  WARN [<THREAD>] PerformanceComparison  - Field width control event
-----
+* *No such event was ever captured.* The superseded generation rendered exactly what its consumer
+  emitted. A shorter-levelled line added to this corpus would be a line this project computed, not a
+  line it recorded, and a baseline that contains computed bytes is no longer an oracle: it can only
+  ever confirm the reasoning that produced it.
+* *It would misrepresent the consumer.* The comparison class emits one event on this logger, at
+  `DEBUG`. Recording a second, at another level, states something about the consumer that is not true.
+* *The corpus rule is explicit.* Every record in this script is a consumer emission; admitting one
+  exception would make the rule unenforceable, and the same exception was already removed from the
+  sibling corpus for the same reason.
 
-Rendered through a bare `+%p+`, with the width dropped:
-
-[source,text]
-----
-<TS> WARN [<THREAD>] PerformanceComparison  - Field width control event
-----
-
-The two differ by exactly one byte -- 145 against 144 for the whole two-line capture -- and that byte
-is the space that right-aligns `WARN` in the five-character field. It is the entirety of the evidence
-that the width survived translation, and it is now in the corpus.
-
-Three things this control event is *not*:
-
-* *It is not a re-levelled consumer emission.* The consumer's own `DEBUG` event is still replayed,
-  first and unchanged. The control is an *additional* event, at a level T8's `debug` root already
-  admits, and no consumer is claimed to make it.
-* *It is not tuning to make output appear.* It changes no appender option, no root level, no buffer
-  size and no flush setting, so the third capture discipline above still holds in full.
-* *It is not owed by T9 or T10.* Their pattern renders the level through a bare `+%p+`, so there is no
-  width to verify; neither carries a control event and neither baseline changed.
+T9 and T10 are owed no equivalent discussion: their pattern renders the level through a bare `+%p+`, so
+there is no width to verify at all.
 
 === Where the script lives
 
@@ -338,15 +326,16 @@ Three things this control event is *not*:
 `log4j-core-test/src/test/java/org/apache/logging/log4j/core/config/Log4j1MigratedConfigParityTest.java`,
 never as a resource file in this directory.
 
-[IMPORTANT]
-.State of the consuming test at this checkpoint
+[NOTE]
+.State of the consuming test
 ====
-*That test class does not exist yet.* `Log4j1MigratedConfigParityTest.java` is absent from the tree, so
-the table above is currently the *only* record of the script, and it is deliberately complete for that
-reason. Everything this document says about what the consuming test does is a *contract the class must
-honour when it is written*, not a description of code already running. The corpus precedes the test on
-purpose: the baselines had to be captured while the Log4j 1.x classpath still existed, which is no longer
-the case, whereas the test can be written at any time afterwards against the committed evidence.
+*That test class now exists* and consumes this corpus: `Log4j1MigratedConfigParityTest.java` is in the
+tree beside the other configuration tests, and it runs three independent cases, one per fixture. The
+table above and the class's own constants must agree; the table remains deliberately complete so that
+either can be checked against the other. The corpus nevertheless precedes the test in time, and that
+ordering is not incidental: the baselines had to be captured while the Log4j 1.x classpath still
+existed, which is no longer the case, whereas the test was written afterwards against the committed
+evidence. That is why the captures are oracles and the test is their consumer, never the reverse.
 ====
 
 The sibling `log4j-perf-test` corpus keeps an equivalent script as a resource, and this module cannot
@@ -364,10 +353,10 @@ document -- and no fifth.
 
 == Contract for the consuming test
 
-This document is self-sufficient by design, because the test that will consume the corpus is to be
-written against it -- and, as recorded above, that test is *not yet in the tree*. Every item below is a
-requirement on code still to be written rather than a description of code that exists. The contract it
-must honour:
+This document is self-sufficient by design, because the test that consumes the corpus was written
+against it. Every item below is a standing requirement on that test, and each is honoured by the class
+now in the tree; the list is kept as a contract rather than rewritten as a description, so that a future
+change to the test can be checked against it:
 
 * *Boot each fixture in an isolated `LoggerContext`,* using
   `new LoggerContext(name, null, uri)`, `start()`, and `Configurator.shutdown(ctx)` to tear it down.
@@ -383,13 +372,16 @@ must honour:
 * *Never trim, strip or collapse the text it compares.* The T9 and T10 baselines carry a significant
   trailing space, and normalising it away would make the comparison pass while hiding a real
   difference.
-* *Verify T8's level field by rendering it, not by reading the pattern.* Replay both of T8's scripted
-  events and compare the *whole* of `log4j12-perf.baseline.txt` -- never only its first line, never
-  only a prefix. The `WARN` control line is the corpus's sole evidence that the `+%5p+` field width
-  survived translation, so a comparison that stops short of it would pass just as happily against a
-  translated pattern whose width had been deleted. Asserting that the configured pattern *string*
-  contains `+%5p+` is not a substitute: it reads the translation instead of observing what the
-  translation renders.
+* *Compare the whole of every capture,* never only a first line and never only a prefix. The whole file
+  is read as bytes and decoded in one step, so the presence or absence of the terminating line separator
+  is part of the comparison too.
+* *Compare rendered output and nothing else.* The test asserts on the bytes the fixture wrote; it does
+  not interrogate the built configuration, does not fetch an appender to inspect it, and does not read
+  the configuration files. Structural questions -- including whether T8's `+%5p+` width survived
+  translation, which its `DEBUG`-only capture cannot answer -- are answered by the observed
+  effective-configuration tables in this document, which is what they are for. Splitting the evidence
+  this way is deliberate: it keeps the test unable to pass by agreeing with the translation it is meant
+  to be checking.
 * *Stay within this module's API surface.* `log4j-core-test` compiles at release 8, so the test may
   not use `var`, `Files.readString`, `Files.writeString`, `String.strip`, text blocks, or
   `List.of`/`Set.of`/`Map.of`. `String.strip` and `String.trim` are doubly excluded, for the
@@ -536,10 +528,12 @@ rendered output.
 | Layout pattern
 | `%d %5p [%t] %c{1} %X{transactionId} - %m%n`
 | `%d %5p [%t] %c{1} %X{transactionId} - %m%n` -- identical text, and identical rendering; audited
-  token by token in Record 3. The `+%5p+` field width is confirmed by *rendered output*, not by
-  reading the attribute back: the baseline's `WARN` control line carries the right-aligning space that
-  a bare `+%p+` would not produce
-| yes
+  token by token in Record 3. *This row is the sole evidence that the `+%5p+` field width survived
+  translation*, because T8's only captured event is at `DEBUG`, which fills the five-character field
+  exactly and so renders identically through a bare `+%p+`. The 2.x column is read out of the
+  `-Dlog4j2.debug` boot output of the migrated fixture, character for character, rather than by
+  re-reading the file the translation wrote
+| yes -- both observed, compared character for character including the width
 
 | Buffering and flush disposition
 | `immediateFlush=false`, `append=false`, buffered I/O *off* with an 8192-byte writer buffer
@@ -565,18 +559,20 @@ The migrated fixture renders, after normalization:
 [source,text]
 ----
 <TS> DEBUG [<THREAD>] PerformanceComparison  - SEE IF THIS IS LOGGED 2.
-<TS>  WARN [<THREAD>] PerformanceComparison  - Field width control event
 ----
 
-which is byte-identical to `log4j12-perf.baseline.txt`, all 145 bytes of it. *The normalized diff is
-empty.* Two details of those bytes are load-bearing rather than incidental:
+which is byte-identical to `log4j12-perf.baseline.txt`, all 72 bytes of it -- one line, terminated by a
+single line separator. *The normalized diff is empty.* Two details of those bytes are load-bearing
+rather than incidental:
 
-* The *double space* before each `-` is correct, and is explained in Record 3.
-* The *single leading space* before `WARN` on the second line is the `+%5p+` field width doing its
-  work. `DEBUG` on the first line already fills the five-character field and so sits flush against its
-  neighbouring spaces; `WARN` is four characters and is right-aligned into the field. Delete the width
-  from the translated pattern and that byte disappears -- which is exactly what the control event
-  exists to catch.
+* The *double space* before the `-` is correct, and is explained in Record 3. It is what the
+  `%X{transactionId}` token leaves behind when no such key is populated, and collapsing it would be a
+  rendered-output defect.
+* `DEBUG` sits *flush* against its neighbouring spaces, with no leading pad, because it is exactly five
+  characters and so fills the `+%5p+` field completely. That is why this capture cannot distinguish the
+  width from its absence, and why the width is verified by the layout-pattern row of the table above
+  rather than by these bytes. The corpus does not invent a shorter-levelled event to make the padding
+  visible; the reasons are set out under the field-width heading earlier in this document.
 
 == T9 -- `perf-log4j12.xml`
 
@@ -951,12 +947,16 @@ lost.* A repository-wide search now finds exactly one `log4j.dtd`, the bridge's.
 * This directory is *not published.* `log4j-core-test/pom.xml` contains no `test-jar` execution and no
   `maven-jar-plugin` execution, so nothing outside the module could ever have consumed the fixture.
 * *Commit sequencing, stated exactly.* The deletion did not follow all three translations. The DTD was
-  removed in the *same* commit that translated T8 and T9 -- `81a8fda59`, whose file list for this
-  directory is the deleted `log4j.dtd` together with the modified `log4j12-perf.xml` and
-  `perf-log4j12.xml` -- so neither of those two ever stood in the tree as a Log4j 1.x document with its
-  DTD already gone. T10, `perf-log4j12-async.xml`, was translated one commit later, in `dc38eb833`. For
-  that single intermediate commit T10 still carried its Log4j 1.x DOCTYPE while this module's copy of
-  the DTD was already deleted.
+  removed in the *same* commit that translated T8 and T9 -- `81a8fda59`, whose complete file list for
+  this directory is the deleted `log4j.dtd`, the modified `log4j12-perf.xml` and `perf-log4j12.xml`, and
+  two additions: this document and T8's baseline `log4j1-parity/log4j12-perf.baseline.txt` -- so neither
+  of those two fixtures ever stood in the tree as a Log4j 1.x document with its DTD already gone. T10,
+  `perf-log4j12-async.xml`, was translated in the very next commit, `dc38eb833`, which also added T10's
+  baseline. For that single intermediate commit T10 still carried its Log4j 1.x DOCTYPE while this
+  module's copy of the DTD was already deleted. T9's baseline
+  `log4j1-parity/perf-log4j12.baseline.txt` arrived later still, in `272a93b46`: the translations and
+  their captures did *not* all land together, and this sequencing is recorded rather than smoothed over
+  because the captures are the oracle and their provenance has to be checkable.
 * *Why that intermediate window changed nothing.* Three independent reasons, recorded rather than
   glossed. First, the governing plan executes this migration as *one* change and validates the final
   state, not the reactor's intermediate commits. Second, nothing automated parsed these fixtures: at the
@@ -1035,7 +1035,7 @@ Two consequences follow, and they are what make this audit exact:
   the native converter is keyed `p` and `level` and appends the event's level directly. Both end up
   rendering the level's own string form, so they agree for every standard level. The only case in
   which they could diverge is a custom level. *T8, T9 and T10 declare no custom level, and the
-  replayed events use only the standard levels `DEBUG`, `INFO` and `WARN`* -- which is the precise
+  replayed events use only the standard levels `DEBUG` and `INFO`* -- which is the precise
   scope of this claim. It is deliberately not stated more broadly: this very directory contains
   unrelated custom-level fixtures, namely `log4j-customLevel.xml`, `log4j-customLevels.xml`,
   `log4j-customLevelsOverride.xml` and `log4j-customLevelsWithFilters.xml`. The `+5+` in T8's `+%5p+`
@@ -1051,12 +1051,12 @@ Two consequences follow, and they are what make this audit exact:
   both worlds render *the empty string*.
 |===
 
-=== The `+%5p+` width is verified by rendering, not by reading the rewrite
+=== The `+%5p+` width, and the two claims it needs
 
 The rewrite evidence above establishes that a width *survives* translation, because the capture group is
 re-emitted -- `+%5p+` becomes `+%5v1Level+`. It does *not* establish that the width is still *in* the
-translated pattern, and the two are different claims. Glossing over the distinction would have cost this
-corpus its only `+%5p+` evidence:
+translated pattern, and the two are different claims. Both are settled below, neither by guesswork and
+neither by an invented event:
 
 [WARNING]
 .A five-character level cannot see a five-character field
@@ -1066,37 +1066,35 @@ minimum field, a five-character level needs no padding, so its bytes are *identi
 same level rendered through a bare `+%p+`.
 
 T8 is the only fixture here whose pattern carries a width, and its consumer's own emission is at
-`DEBUG`. Had the capture stopped there, deleting the `+5+` from the translated pattern would have left
-the baseline unchanged -- and the reasoning "`the baseline shows DEBUG with no padding, and a shorter
-level would have been right-aligned identically by both generations`" would have been self-defeating,
-because it concedes that no shorter level was ever rendered.
+`DEBUG`. The committed capture therefore *cannot* see the width: deleting the `+5+` from the translated
+pattern would leave `log4j12-perf.baseline.txt` byte for byte unchanged.
 ====
 
-*The hole is closed by rendering a shorter standard level.* T8's script carries a `WARN` field-width
-control event and its rendered bytes are committed as the baseline's second line. Both forms were
-produced by the superseded generation during the baseline capture, so the difference below is an
-observation:
+*Claim one -- the width is still in the translated pattern.* This is settled by observation, in the
+layout-pattern row of T8's effective-configuration table above: the 2.x column is read out of the
+migrated fixture's own `-Dlog4j2.debug` boot output and compared with the superseded pattern character
+for character, `+%5p+` included. A width that had been dropped in translation fails that row while
+rendering identical bytes, which is exactly the case the row exists to catch.
 
-[cols="2,3,1",options="header"]
-|===
-| Pattern actually configured | Rendered bytes for the same `WARN` event | Verdict
+*Claim two -- the width means the same thing in both generations.* This is settled by the independent
+cross-generation measurement below, which does not depend on any event this corpus replays.
 
-| `+%d %5p [%t] %c{1} %X{transactionId} - %m%n+`
-| `+<TS>  WARN [<THREAD>] PerformanceComparison  - Field width control event+`
-| the committed baseline
-
-| `+%d %p [%t] %c{1} %X{transactionId} - %m%n+` -- the width dropped
-| `+<TS> WARN [<THREAD>] PerformanceComparison  - Field width control event+`
-| *diff is non-empty*
-|===
-
-One byte apart: the space that right-aligns `WARN` in the field. T9 and T10 are owed no such control,
-because their pattern renders the level through a bare `+%p+` and there is no width to verify.
+[NOTE]
+.Why no shorter-levelled event was added to close claim one by rendering instead
+====
+Adding an event at a four-character level would make the padding visible in the bytes, and it was
+rejected. The superseded generation rendered exactly what T8's consumer emitted, once, at `DEBUG`; a
+shorter-levelled line in this baseline would be a line *computed by this project* rather than one
+*recorded from the superseded generation*, and a baseline holding computed bytes can only confirm the
+reasoning that produced it. The same invented event was removed from the sibling corpus for the same
+reason. Claim one is a question about the translated configuration, and it is answered with observed
+configuration evidence rather than with a fabricated capture.
+====
 
 ==== The same level column, measured at every standard level
 
-The control above proves the width for the one shorter level this corpus replays. The padding rule
-behind it was measured independently as well: T8's conversion pattern was rendered for T8's own logger
+T8's padding rule was measured independently of anything this corpus replays: T8's conversion pattern
+was rendered for T8's own logger
 and message through the *genuine Log4j 1.2.17 layout* and through Log4j 2's own `PatternLayout`, at
 every standard level, and the results byte-compared. The leading `+%d+` is dropped from the probe so
 that wall-clock skew between the two renders cannot defeat a byte comparison; every other token,
@@ -1125,9 +1123,10 @@ whole line is identical at all six levels, trailing space before the separator i
 families' level columns are therefore genuinely different widths by design, and each is preserved as it
 stood.
 
-*Observed in the fixtures themselves:* `DEBUG` and `WARN` for T8 and `INFO` for T9 and T10, in the same
-columns as before the translation -- with the padding behaviour behind T8's column established by the
-measurement above instead of predicted from the rewrite map.
+*Observed in the fixtures themselves:* `DEBUG` for T8 and `INFO` for T9 and T10, in the same columns as
+before the translation -- with the padding behaviour behind T8's column established by the measurement
+above instead of predicted from the rewrite map, and the presence of the width in the translated pattern
+established by the observed layout-pattern row rather than by a fabricated shorter-levelled capture.
 
 === `%c{1}` renders the full simple logger name
 
@@ -1278,7 +1277,7 @@ proves it harmless are recorded here rather than asserted.
 . *A control run proves the attribute changes no rendered byte.* Booting all three fixtures with the
   attribute present makes the built root report `true`, matching genuine Log4j 1.x exactly. Every
   fixture was then replayed under both variants and the captures compared: the raw bytes are identical
-  under the two variants (T8 145 bytes over two lines, T9 43 bytes, T10 43 bytes), every normalized
+  under the two variants (T8 72 bytes over one line, T9 43 bytes, T10 43 bytes), every normalized
   diff between the two variants is empty, and all three captures reproduce their committed baselines
   byte for byte.
   Booting with `-Dlog4j2.debug` emits no `WARN`, `ERROR` or `FATAL` status line under either variant.

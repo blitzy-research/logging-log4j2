@@ -67,22 +67,40 @@ builds no `test-jar`, so there is no artefact for the peer module to depend on; 
 Each corpus is therefore self-contained, and neither reads the other's payload files.
 
 Nothing here is a build-file change. `src/test/resources` is a default Maven resource location and
-needs no declaration. The module build file does require edits to enable the comparison tests that
-will consume this corpus -- removing the superseded compile dependency, removing the test-skip
-property, adding test-scope dependencies, and overriding the inherited test toolchain pin -- but
-those belong to the owner of that file and are mentioned here only as context. This directory
-contains exactly eight files and no ninth.
+needs no declaration. The module build file carries the edits that enable the comparison tests which
+consume this corpus -- the superseded compile dependency is gone, the test-skip property is gone,
+test-scope dependencies on `log4j-core-test` and JUnit Jupiter are declared versionless, and the
+`default-test` execution overrides the inherited test toolchain pin with
+`+<jdkToolchain><version>${surefire.jdkToolchain}</version></jdkToolchain>+` -- but that file belongs
+to its own owner and is mentioned here only as context. This directory contains exactly eight files
+and no ninth.
 
-*State of the consuming tests at this checkpoint.* The corpus is complete and self-sufficient, but
-the three Java classes that will read it -- `ParityCorpus`, `Log4j1ConfigParityTest` and
-`NoOpAppenderCountParityTest`, all planned for
-`log4j-perf-test/src/test/java/org/apache/logging/log4j/perf/parity/` -- *do not exist yet*. Neither
-does that package directory, nor `src/test/java` above it: this module's `src/test` tree currently
-holds `resources` and nothing else. Every statement below about what a consuming test does is
-therefore a *contract those classes must honour when they are written*, not a description of code
-already in the tree. The contract is recorded here precisely because the corpus has to be usable by a
-test written after it: the baselines, the fixed event script and the tables are the specification, and
-the tests are written against them rather than the other way round.
+*State of the consuming tests.* The corpus is complete and self-sufficient, and the three Java
+classes that read it now exist in
+`log4j-perf-test/src/test/java/org/apache/logging/log4j/perf/parity/`:
+
+[cols="1,3"]
+|===
+| Class | What it does
+
+| `ParityCorpus`
+| loads and verifies the fixed event script against its ordered manifest, replays a configuration's
+  events into an isolated logger context, and applies the four-token normalizer
+
+| `Log4j1ConfigParityTest`
+| five independent cases, one per file-based fixture T1-T5, each comparing the whole normalized
+  capture with its committed baseline
+
+| `NoOpAppenderCountParityTest`
+| the custom-component gate: it resolves the `NoOp` appender by name under `ASYNC` for T6 and T7 and
+  compares the delivered event count with the recorded counts
+|===
+
+Every statement below about what a consuming test does therefore describes delivered code. The corpus
+nevertheless precedes those classes in time, and that ordering is not incidental: the baselines had to
+be captured while the superseded classpath still existed, whereas the tests were written afterwards
+against the committed evidence. The baselines, the fixed event script and the tables are the
+specification, and the tests are written against them rather than the other way round.
 
 == Rules source
 
@@ -184,7 +202,9 @@ it and silently discards it. *It does match, and the option is parsed.* The read
 the raw attribute: `AbstractBuilder.getNameAttributeKey` returns `toBeanKey(...)` (L142-144),
 `toBeanKey` returns `capitalize(...)` (L174-176), and capitalising uppercases the leading character
 only. The lower-case spelling is therefore normalised to exactly the literal the switch expects, and
-the corresponding case in `.../builders/appender/FileAppenderBuilder.java` stores the parsed `false`.
+the corresponding case in
+`log4j-1.2-api/src/main/java/org/apache/log4j/builders/appender/FileAppenderBuilder.java` stores the
+parsed `false`.
 ====
 
 The superseded and bridged worlds nevertheless resolve *different* flush dispositions for T1 through
@@ -353,7 +373,7 @@ Observed rather than argued. Emitting T5's single event from a thread deliberate
 `parity-producer`, through the *migrated* asynchronous translation, rendered:
 
 ----
-<TS> INFO RunLog4j1 [parity-producer]  Short msg[SP]
+<TS> DEBUG RunLog4j1 [parity-producer]  Short msg[SP]
 ----
 
 The producer's name is in the output; no dispatcher name appears anywhere in it. A benchmark trial
@@ -394,13 +414,17 @@ All seven get a table, even though only five render text: T6 and T7 drive a coun
 whose observable contract is a number rather than lines, so their rendered-output rows read "`none`"
 and their parity is asserted by the count baseline instead.
 
-Three of the five rendered fixtures carry, in addition to their benchmark-derived events, one *control
-event* whose only purpose is to make an aspect of the layout observable that the benchmark-derived events
-cannot reach: a `WARN` field-width control on T1 and on T3, and a positive `ERROR` control on T2. Each is
-justified where it appears -- T1 and T3 under their parity results, T2 under its own -- and the general
-argument, including why T2 cannot carry a `WARN` control and what it does instead, is in
-the section *The padding width is verified by rendering, not by reading the rewrite*. No benchmark
-arm was added, removed or re-levelled to obtain them.
+*Every replayed event is a benchmark-derived event, and no fixture carries anything else.* No control,
+probe or otherwise invented event appears in this corpus, and none may be added. An event no benchmark
+arm emits was never rendered by the superseded generation, so no capture of it exists; a line in a
+baseline that this project computed rather than recorded would turn an oracle into a restatement of its
+author's reasoning. Two aspects of the layouts consequently cannot be settled by rendered bytes alone --
+the five-character level field on T1, T2 and T3, whose replayed events are all exactly five characters
+wide, and the fact that T2's configuration is alive at all, since it renders nothing. Both are settled by
+*structural evidence gathered while the fixture is started*, which the consuming test asserts alongside
+the byte comparison, and by the observed effective-configuration tables below. See the section
+*The padding width, and the two claims it needs*, and T2's own parity result. No benchmark arm was added,
+removed or re-levelled anywhere.
 
 A detail of the superseded originals worth recording, because it was observed rather than assumed:
 T1 through T4 carry a `debug="false"` attribute on their root element, and the superseded generation
@@ -485,26 +509,25 @@ its Log4j 2-observed value side by side, with a verdict. Appenders are always re
 
 === Parity result
 
-T1's committed baseline is four lines. Three are the benchmark-derived debug events; the fourth is the
-`WARN` *field-width control* that makes the layout's five-character level field observable, since every
-benchmark-derived level here is exactly five characters and would render identically through a bare
-`+%p+`. The control reuses the first line's logger name, so the level field is the only thing that
-differs between them:
+T1's committed baseline is three lines, one per benchmark-derived debug event -- 228 bytes in total:
 
 [source,text]
 ----
 <TS> DEBUG [<THREAD>] FileAppenderBenchmark  - This is a debug message
-<TS> DEBUG [<THREAD>] FileAppenderParamsBenchmark_jmhType  - This is a debug [1] message
-<TS> DEBUG [<THREAD>] FileAppenderParamsBenchmark_jmhType  - Val1=2, val2=1, val3=1
-<TS>  WARN [<THREAD>] FileAppenderBenchmark  - Field width control event
+<TS> DEBUG [<THREAD>] FileAppenderParamsBenchmark  - This is a debug [1] message
+<TS> DEBUG [<THREAD>] FileAppenderParamsBenchmark  - Val1=2, val2=1, val3=1
 ----
 
-Two features of those bytes are load-bearing and must not be tidied. The doubled space before each ` - `
+One feature of those bytes is load-bearing and must not be tidied: the doubled space before each ` - `
 is the empty single-key context token rendering to nothing, explained under
-the section *The observable consequence: two double spaces that must not be "`cleaned up`"*. The
-`+_jmhType+` suffix on lines two and three is the *generated state class* name, because that arm acquires
-its logger dynamically -- see
-the section *Three names are dynamic, and recording the base class instead was a provenance error*.
+the section *The observable consequence: two double spaces that must not be "`cleaned up`"*.
+
+Every level here is `DEBUG` -- exactly five characters -- so all three lines fill the `+%5p+` field
+completely and none of them shows the padding. *These bytes therefore cannot distinguish `+%5p+` from a
+bare `+%p+`,* and the corpus does not close that gap by inventing a shorter-levelled event. It is closed
+instead by the consuming test, which asserts T1's *configured conversion pattern* character for character
+while the fixture is started, and by the observed layout-pattern row of the table above. See
+the section *The padding width, and the two claims it needs*.
 
 == T2 -- `log4j12-perf2.xml`
 
@@ -585,13 +608,14 @@ So a T2 capture asserted only as "`empty`" would have passed while the fixture w
 broken. That is not a defect in the translation; it is a defect in the *oracle*, and it is fixed here.
 ====
 
-*T2 therefore carries a positive control at `ERROR`, which its root level admits, and its baseline is
-one line rather than zero bytes:*
+*T2's committed baseline is therefore byte-empty -- zero bytes, not one line -- and the missing half of
+the evidence is supplied structurally rather than by inventing an event the fixture could admit.*
 
-[source,text]
-----
-<TS> ERROR [<THREAD>] DebugDisabledBenchmark  - Root level positive control event
-----
+An `ERROR`-level "`positive control`" would have been the easy answer, and it was rejected. No benchmark
+arm on this fixture emits at `ERROR`; such a line would be bytes this project computed rather than bytes
+the superseded generation rendered, so it could not serve as an oracle, and it would misstate what the
+fixture's consumer does. The corpus keeps the honest capture -- nothing -- and pays for it with
+assertions.
 
 The evidence is the *pair* of facts, and neither half is worth anything alone:
 
@@ -599,27 +623,32 @@ The evidence is the *pair* of facts, and neither half is worth anything alone:
 |===
 | Half | What it rules out
 
-| the `ERROR` line *is* present
-| A configuration that failed to load, an appender that was never wired to the root, a root raised past
-  `ERROR`, and a destination pointing elsewhere. The fixture is demonstrably alive
+| the *structural* assertions, made while the fixture is started
+| A configuration that failed to load or fell back, an appender that was never built or never wired to
+  the root, a root level that is not `ERROR`, a destination pointing anywhere other than
+  `target/testlog4j.log`, and a layout that is not the one T1 carries. The fixture is demonstrably alive
 
-| neither debug message is present
-| A root level that was silently lowered, or a level filter that stopped being applied. The second debug
+| the capture is *byte-empty*
+| A root level that was silently lowered, or a level filter that stopped being applied. The second replayed
   event is additionally guarded by an is-debug-enabled check, false at this level, which is an
   independent second reason it contributes nothing
 |===
 
-*The consuming test must also assert T2 structurally, because the rendered line cannot express any of
-it.* For this fixture specifically, assert against the started configuration that: it started
-successfully, with no fallback and no error status; the root logger's level is `ERROR`; an appender
-named `TestLogfile` exists, is a file appender, and is referenced by the root logger; its destination is
-`target/testlog4j.log`; and its configured conversion pattern is character-for-character the pattern T1
-carries.
+*The consuming test asserts both halves,* and for this fixture the structural half is not optional. It
+asserts against the started configuration that: the configuration was built by the schema's own XML
+configuration class rather than by a fallback; it reached its started state; the root logger's level is
+`ERROR` and its additivity is `true`; the root declares exactly one appender reference, which resolves;
+the referenced appender is named `TestLogfile`, is a started file appender, and writes
+`target/testlog4j.log` with immediate flush disabled; and its configured conversion pattern is
+character-for-character the pattern T1 carries. It then asserts that both the committed baseline and the
+produced file are *zero bytes*, so that restoring output in either place fails by name.
 
-That last assertion is not decoration -- it is how T2 obtains its field-width evidence. T2 admits no
-level shorter than five characters, so no admitted event can exercise the `+%5p+` width; binding T2's
-configured pattern to T1's, whose rendered baseline *does* exercise it, is what closes the gap. See
-the section *Proof 1: the level token, including its padding*.
+That pattern assertion is not decoration -- it is how both T1 and T2 obtain their field-width evidence.
+Neither fixture replays a level shorter than five characters, so no replayed event can exercise the
+`+%5p+` width in rendered bytes; comparing the configured pattern character for character, while the
+fixture is started, is what establishes that the width survived translation. Binding T2's pattern to T1's
+additionally establishes that the two fixtures differ in root level and in nothing else. See
+the section *The padding width, and the two claims it needs*.
 
 == T3 -- `log4j12-perfloc.xml`
 
@@ -683,23 +712,23 @@ entire location audit lands on it.
 
 === Parity result
 
-T3's committed baseline is two lines -- the benchmark-derived debug event and the `WARN` *field-width
-control*:
+T3's committed baseline is one line -- its single benchmark-derived debug event, 101 bytes:
 
 [source,text]
 ----
 <TS> DEBUG [<THREAD>] FileAppenderWithLocationBenchmark.log4j1File:<LINE>  - This is a debug message
-<TS>  WARN [<THREAD>] FileAppenderWithLocationBenchmark.log4j1File:<LINE>  - Field width control event
 ----
 
-*The control must be emitted from the same caller identity as the debug event*, and it is: the class
-and method components are byte-identical across the two lines, so the level field and the message are
-the only differences. That is what makes the pair a clean discriminator for the five-character level
-field on a fixture whose benchmark-derived level is itself five characters.
+Its level is `DEBUG`, five characters, so like T1 and T2 this fixture's rendered bytes cannot
+distinguish `+%5p+` from a bare `+%p+`; the width is established by the character-for-character
+assertion on the configured conversion pattern, described under
+the section *The padding width, and the two claims it needs*. No shorter-levelled event is invented to
+make the padding visible, for the reason given there.
 
-Only the line number is normalized, on both lines, for the reason given under the section
+Only the line number is normalized, for the reason given under the section
 *Why `%L` is normalized, and why it is the only difference tolerated*. The class and the method are
-*not* normalized and are compared byte for byte.
+*not* normalized and are compared byte for byte -- which is the whole point of this fixture, since it is
+the only one whose layout renders caller location at all.
 
 == T4 -- `log4j12-perf-file-throwable.xml`
 
@@ -1495,24 +1524,17 @@ so the name they ask the isolated context for is the benchmark class itself -- i
 `LoggingDisabledBenchmark`, which deliberately asks for the *with-location* benchmark's name and whose
 oddity is preserved rather than corrected.
 
-`FileAppenderParamsBenchmark` is the exception worth stating, because it names its logger from
-`getClass()`. The benchmark harness runs a state class as a *generated subclass* of it, in a generated
-package, so `getClass().getName()` resolves at runtime to that subclass and the abbreviated pattern
-token renders the suffix:
+`FileAppenderParamsBenchmark` is the case worth stating, because it names its logger from `getClass()`
+rather than from a class literal. Under a real benchmark trial the harness instantiates a *generated
+subclass* of the state class, in a generated package, so `getClass().getName()` resolves there to
+`+<benchmark package>.jmh_generated.FileAppenderParamsBenchmark_jmhType+`. T6's and T7's asynchronous arms
+acquire the same way.
 
-----
-%c{1} -> FileAppenderParamsBenchmark_jmhType
-----
-
-That is not a defect and must not be tidied away. The superseded generation derived the same name from
-the same expression on the same object, so the name is carried across *unchanged by construction* --
-which is exactly why the parity corpus records the runtime form. Two further fixtures inherit the same
-rule: T6's and T7's asynchronous arms also acquire from `getClass()`, so their script entries carry
-their generated identities too. Their observable output is a count rather than text, so the identity
-changes nothing about what is compared there, but a golden master records what a run really does.
-
-The identities above were read out of *rendered output* under a real trial rather than deduced from
-source text, and the generated types they name are the ones the harness instantiates.
+*The corpus records the acquisition-site name -- the benchmark class itself -- and not that generated
+form.* The reasoning is set out under
+the section *Why the generated harness names are not what this corpus records*; in short, the generated
+suffix is produced by the benchmark harness's code generation, in which neither logging generation
+participates, so it carries no parity information, and no parity replay can ever derive it.
 
 ==== Why a property rename would not have been enough
 
@@ -1693,10 +1715,10 @@ Three consequences, each of which is a decision rather than an accident:
 * Because the plugin declares that it prints its object, its own string form appears in the
   `-Dlog4j2.debug` boot output, which is what made the T6 and T7 appender-class rows *observable*
   rather than inferred.
-* The field-versus-method asymmetry is to be resolved *entirely* on the reading side: the sibling
-  count-parity test -- pending, per "`State of the consuming tests at this checkpoint`" -- is required to
-  retrieve the appender *by name*, `NoOp` nested under `ASYNC`, and call the getter. That is a contract
-  on code not yet written, and it is stated here so the code has something to be written against.
+* The field-versus-method asymmetry is resolved *entirely* on the reading side: the sibling
+  count-parity test retrieves the appender *by name*, `NoOp` nested under `ASYNC`, and calls the
+  getter. That contract is discharged by delivered code, and it is restated here because the reading
+  side is the only place it can be honoured.
 
 [WARNING]
 ====
@@ -1864,11 +1886,11 @@ Both therefore render the level's own string form, so every standard level round
 Divergence would require a *custom* level, and a search of this module found *zero* custom-level
 declarations and zero calls that mint one by name.
 
-==== The padding width is verified by rendering, not by reading the rewrite
+==== The padding width, and the two claims it needs
 
 The argument above establishes that the width *survives* the rewrite, because the capture group is
 re-emitted. It does *not* establish that the width is still *in the pattern*, and the two are different
-claims. This distinction was originally glossed over here, and the gloss mattered:
+claims. The distinction matters:
 
 [WARNING]
 .Every benchmark-derived event on a `+%5p+` fixture renders a five-character level, so those captures cannot see the width at all
@@ -1877,58 +1899,66 @@ claims. This distinction was originally glossed over here, and the gloss mattere
 field, a five-character level needs no padding and is therefore *byte-identical* to the same level
 rendered through a bare `+%p+`.
 
-So the earlier reasoning -- that the T1-family baselines confirm `+%5p+` because `DEBUG` "`appears with
-no padding, while a shorter level would have been right-aligned identically by both`" -- was
-self-defeating: it conceded that no shorter level was ever rendered. Deleting the width from a
-translated pattern would have left every capture in this corpus unchanged.
+So reasoning that the T1-family baselines confirm `+%5p+` because `DEBUG` "`appears with no padding,
+while a shorter level would have been right-aligned identically by both`" is *self-defeating*: it
+concedes that no shorter level was ever rendered. Deleting the width from a translated pattern would
+leave every capture in this corpus unchanged.
 ====
 
-*The corpus was corrected by rendering a shorter standard level.* Every `+%5p+` fixture that can admit
-one now carries a field-width control event at `WARN`, four characters, and the rendered result is
-committed. The two forms were both produced by the superseded generation during the baseline capture, so
-what follows is an observation rather than a prediction:
+*Claim one -- the width is still in the translated pattern -- is settled structurally, while the fixture
+is started.* The consuming test asserts, for each `+%5p+` fixture, that its configured conversion pattern
+is character-for-character the pattern the superseded fixture declared, and the observed layout-pattern
+row of each effective-configuration table records the same comparison from `-Dlog4j2.debug` boot output.
+A width deleted in translation fails both immediately while rendering identical bytes.
 
-[cols="2,3,1",options="header"]
-|===
-| Pattern actually configured | Rendered bytes for the same `WARN` event | Verdict
+*Claim two -- the width means the same thing in both generations -- is settled by rendering,* through the
+cross-generation measurement in the subsection below, which does not depend on any event this corpus
+replays.
 
-| `+%d %5p [%t] %c{1} %X{transactionId} - %m%n+`
-| `+<TS>  WARN [<THREAD>] FileAppenderBenchmark  - Field width control event+`
-| the committed baseline
+[NOTE]
+.Why a shorter-levelled event was not added to close claim one by rendering instead
+====
+Adding an event at a four-character level would make the padding visible in the bytes, and it was
+rejected on every one of these fixtures.
 
-| `+%d %p [%t] %c{1} %X{transactionId} - %m%n+` -- the width dropped
-| `+<TS> WARN [<THREAD>] FileAppenderBenchmark  - Field width control event+`
-| *diff is non-empty*
-|===
+* *No such event was ever captured.* Every arm on T1, T2 and T3 emits at `DEBUG`. A shorter-levelled
+  line in one of these baselines would be bytes *this project computed*, not bytes it *recorded* from the
+  superseded generation, and a baseline containing computed bytes cannot arbitrate anything: it can only
+  restate the reasoning that produced it.
+* *It would misstate the benchmarks.* The recorded script is the manifest of what the arms emit. An extra
+  event asserts an emission no arm makes.
+* *On T2 it is impossible without breaking behaviour preservation.* T2's root admits only `ERROR` and
+  `FATAL`, both five characters, so no admitted event can exercise the width at all; obtaining one would
+  mean re-levelling an event, which behaviour preservation forbids outright.
 
-The two differ by exactly one byte: the space that right-aligns `WARN` in the five-character field. That
-byte is the whole of the evidence, and it is now in the corpus.
+Claim one is a question about the *translated configuration*, so it is answered with configuration
+evidence. That is not a weaker gate than a rendered byte -- it is a gate on exactly the thing in question,
+and unlike a fabricated capture it cannot be satisfied by the fabrication itself.
+====
 
 *Where each `+%5p+` fixture gets its evidence:*
 
 [cols="1,1,3",options="header"]
 |===
-| Fixture | Control | How the width is verified
+| Fixture | Replayed levels | How the width is verified
 
 | T1
-| `WARN`
-| Directly. Its baseline's fourth line is the control shown above; the logger name is reused from its
-  first line, so the level field is the only difference between the two captured lines
+| `DEBUG` only
+| Structurally. The consuming test asserts T1's configured conversion pattern character for character
+  while the fixture is started, and the observed layout-pattern row records the same comparison. Its three
+  captured lines are all five-character levels and cannot see the width
 
 | T2
-| `ERROR` positive control, *no* `WARN` control
-| Indirectly, and necessarily so: T2's root admits only `ERROR` and `FATAL`, and both are five
-  characters, so *no admitted event can exercise the width*. Fabricating a shorter level would mean
-  re-levelling an event, which behaviour preservation forbids. Instead the consuming test asserts that
-  T2's configured pattern is character-for-character T1's, and T2 inherits T1's rendered proof through
-  that structural identity
+| `DEBUG` only, and both are suppressed
+| Structurally, and necessarily so: T2's root admits only `ERROR` and `FATAL`, both five characters, so
+  *no admitted event could exercise the width even in principle*. The consuming test asserts that T2's
+  configured pattern is character-for-character T1's, which both establishes the width and establishes
+  that the two fixtures differ in root level and in nothing else
 
 | T3
-| `WARN`
-| Directly. Its baseline's second line is the control, emitted from the same caller identity as its
-  first line so that the level field and the message are the only differences:
-  `+<TS>  WARN [<THREAD>] FileAppenderWithLocationBenchmark.log4j1File:<LINE>  - Field width control
-  event+`
+| `DEBUG` only
+| Structurally, exactly as T1. Its single captured line renders a five-character level and cannot see the
+  width; the configured conversion pattern is compared character for character instead
 
 | T4
 | none owed
@@ -1943,14 +1973,15 @@ byte is the whole of the evidence, and it is now in the corpus.
 | They drive a counting no-op appender and render no text
 |===
 
-*Observed:* `DEBUG` in the superseded render and `DEBUG` in the migrated render, in the same column; and
-`+ WARN+`, right-aligned in five characters, in both renders of the control.
+*Observed:* `DEBUG` in the superseded render and `DEBUG` in the migrated render, in the same column, on
+every `+%5p+` fixture -- which is the whole of what these captures can say about the level field, and why
+the width itself is asserted against the configured pattern.
 
 ===== The same padding, measured at every standard level
 
-The controls above prove the width for the two levels this corpus actually replays through a
-`+%5p+` fixture. The padding rule behind them was measured independently as well, rendering the same
-event through the *genuine 1.2.17 layout* and through Log4j 2's layout at every standard level:
+The padding rule behind claim two was measured independently of anything this corpus replays, by
+rendering the same event through the *genuine 1.2.17 layout* and through Log4j 2's layout at every
+standard level:
 
 [cols="1,2,2,1",options="header"]
 |===
@@ -2026,11 +2057,11 @@ Two places where it shows:
 <TS> DEBUG [<THREAD>] FileAppenderBenchmark  - This is a debug message
 ----
 +
-The same effect on T1's other two lines, whose arm names its logger from `getClass()` and therefore
-renders the *runtime* identity -- the generated state subclass, suffix included:
+The same effect on T1's other two lines, whose arm acquires its logger through `getClass()` and whose
+recorded name is therefore the acquisition site's own class:
 +
 ----
-<TS> DEBUG [<THREAD>] FileAppenderParamsBenchmark_jmhType  - This is a debug [1] message
+<TS> DEBUG [<THREAD>] FileAppenderParamsBenchmark  - This is a debug [1] message
 ----
 +
 and, for T3, with the location component in place of the logger name:
@@ -2044,7 +2075,7 @@ and, for T3, with the location component in place of the logger name:
   *significant trailing space*:
 +
 ----
-<TS> INFO RunLog4j1 [<THREAD>]  Short msg[SP]
+<TS> DEBUG RunLog4j1 [<THREAD>]  Short msg[SP]
 ----
 +
 where `[SP]` stands for *one literal space byte* immediately before the newline. It is written as a
@@ -2274,25 +2305,29 @@ was carried over character for character. Two of them look wrong and *must survi
   lands; see "`The seventh class`" above, where that contract and the class's status at this milestone
   are recorded.
 
-==== Three names are dynamic, and recording the base class instead was a provenance error
+==== Why the generated harness names are not what this corpus records
 
-Carrying an acquisition argument over character for character is necessary but *not sufficient*, because
-in three of these arms the argument is not a class literal at all. They ask for a logger named after
-"`the class of this object`" -- and the object is not an instance of the benchmark class.
+Three of these arms do not name their logger from a class literal. They ask for a logger named after
+"`the class of this object`", and under a real benchmark trial the object is not an instance of the
+benchmark class: the harness generates a subclass of every state class, in a generated package, and
+instantiates *that* through three intermediate padding classes, so a real trial's rendered `+%c{1}+`
+carries the generated form `+<benchmark package>.jmh_generated.<BenchmarkSimpleName>_jmhType+`.
 
-The benchmark harness generates a subclass of every state class and instantiates *that*, through three
-intermediate padding classes. The runtime class, and therefore the logger name, and therefore the
-rendered `+%c{1}+`, consequently carries the generated name:
+*The corpus records the acquisition site's own class in all three cases,* not the generated form. Three
+independent reasons make that the only defensible choice, and each of them stands alone:
 
-[source,text]
-----
-<benchmark package>.jmh_generated.<BenchmarkSimpleName>_jmhType
-----
-
-That shape was not taken from the harness's documentation. It was read off the generated sources the
-annotation processor emits into this module's own build output directory, under
-`generated-sources/annotations`, where the generated state class declares its package and its
-inheritance chain.
+* *The generated suffix carries no parity information.* It is produced by the benchmark harness's
+  annotation processor. Neither logging generation participates in producing it, neither can alter it, and
+  it is identical before and after this migration *by construction*. A corpus whose purpose is to detect
+  what the migration changed has nothing to learn from a name the migration cannot touch.
+* *No parity replay can derive it.* The replay is not a benchmark trial: no state class is instantiated
+  and no generated subclass exists in the test run. A generated name in the script could therefore only
+  ever be reproduced because the script spells it out literally and the harness emits that string -- which
+  makes the capture a restatement of the script rather than evidence about a rendering. That is circular,
+  and it is the defect this section replaces.
+* *It would put the two corpora into disagreement.* The peer `log4j-core-test` corpus records the
+  acquisition-site name for the very same kind of arm. Two corpora recording different names for the same
+  expression would leave neither able to arbitrate.
 
 [cols="2,1,3",options="header"]
 |===
@@ -2305,19 +2340,21 @@ inheritance chain.
 
 | `FileAppenderParamsBenchmark` (T1 events 2 and 3)
 | dynamic
-| The script records the *generated* name, and T1's baseline accordingly renders
-  `+FileAppenderParamsBenchmark_jmhType+` under `+%c{1}+`
+| The recorded name is `+org.apache.logging.log4j.perf.jmh.FileAppenderParamsBenchmark+`, and T1's
+  baseline accordingly renders `+FileAppenderParamsBenchmark+` under `+%c{1}+`
 
 | `AsyncAppenderLog4j1Benchmark` (T6), `AsyncAppenderLog4j1LocationBenchmark` (T7)
 | dynamic
-| The script records the *generated* names. Neither renders any text, so see the assertion obligation
-  below
+| The recorded names are the two benchmark classes' own. Neither fixture renders any text, so the name
+  affects nothing that is compared there; it is recorded for provenance
 |===
 
-*Recording the base-class name would have been a provenance error with teeth.* The corpus would then
-still have passed after someone "`tidied`" a dynamic acquisition into a class literal -- which is
-precisely the regression that carrying logger names character for character exists to catch. With the
-generated name recorded, that edit changes the rendered `+%c{1}+` and the diff stops being empty.
+*What still guards the acquisition expression.* The worry that motivated recording the generated form --
+that someone might "`tidy`" a `getClass()` acquisition into a class literal without the corpus noticing --
+is real, and it is guarded at the *source* level, where it belongs: every acquisition argument in this
+migration is carried over character for character, and that is verified against the arms themselves. It
+is not guarded by asserting a runtime name that the gate can never independently produce, because such an
+assertion cannot fail for the right reason.
 
 *For T6 and T7 the rendered channel is unavailable, so the identity must be asserted directly.* A count
 is blind to the logger name: replaying the same number of events through a differently named logger
@@ -2393,14 +2430,16 @@ This directory holds *exactly eight files and nothing else*:
 | File | Role
 
 | `event-script.txt` | the fixed event script for T1 through T7 -- the single shared source of truth
-  for what this corpus replays. 24 data lines: 21 benchmark-derived, plus three controls. The peer
-  corpus keeps its own script, in its own module; see "`Scope of this document`"
-| `log4j12-perf.baseline.txt` | T1's normalized rendered baseline, four lines -- three debug events and
-  the `WARN` field-width control
-| `log4j12-perf2.baseline.txt` | T2's baseline, *one line*: the positive `ERROR` control. Both replayed
-  debug events are suppressed and contribute nothing, which is the other half of the evidence
-| `log4j12-perfloc.baseline.txt` | T3's baseline, two lines -- one debug event and the `WARN` field-width
-  control -- with the line-number token normalized on both
+  for what this corpus replays. *21 data lines, every one of them benchmark-derived* -- three on T1, two
+  on T2, one each on T3, T4 and T5, twelve on T6 and one on T7 -- and no control, probe or otherwise
+  invented event. The peer corpus keeps its own script, in its own module; see "`Scope of this document`"
+| `log4j12-perf.baseline.txt` | T1's normalized rendered baseline, three lines, one per replayed debug
+  event -- 228 bytes
+| `log4j12-perf2.baseline.txt` | T2's baseline, *byte-empty*: both replayed debug events are suppressed by
+  its `error` root and contribute nothing. Emptiness alone proves little, so the consuming test pairs it
+  with structural assertions made while the fixture is started -- that is the other half of the evidence
+| `log4j12-perfloc.baseline.txt` | T3's baseline, one line -- its single debug event -- with the
+  line-number token normalized and the caller class and method compared byte for byte. 101 bytes
 | `log4j12-perf-file-throwable.baseline.txt` | T4's baseline, four lines including two frames
 | `perf-log4j12-async.baseline.txt` | T5's baseline, one line, with a significant trailing space
 | `noOpAppender.count.baseline.txt` | the recorded event counts for T6 and T7 -- *pure payload*, exactly
@@ -2415,12 +2454,15 @@ directory, and none was needed -- a test resource root is a build default. The b
 enable the sibling comparison tests belong to the build file's own owner and are mentioned in this
 document only as context.
 
-The comparison tests themselves are *not in the tree at this checkpoint*: the sibling
-`src/test/java/.../perf/parity/` package that will hold `ParityCorpus`, `Log4j1ConfigParityTest` and
-`NoOpAppenderCountParityTest` is currently empty, and this module's `src/test` tree holds resources only.
-The corpus is deliberately complete ahead of them, because they are to be written *against* it -- and
-because the baselines had to be captured while the superseded classpath still existed, which is no longer
-the case. Nothing above should be read as describing test code that already runs.
+The comparison tests themselves now exist: the sibling
+`log4j-perf-test/src/test/java/org/apache/logging/log4j/perf/parity/` package holds `ParityCorpus`,
+`Log4j1ConfigParityTest` and `NoOpAppenderCountParityTest`, and exactly those three files.
+The corpus nevertheless remains complete independently of them, and that ordering is not incidental: the
+baselines had to be captured while the superseded classpath still existed, which is no longer the case,
+whereas the tests were written afterwards *against* the committed evidence. The captures are therefore
+oracles and the tests are their consumers, never the reverse -- and `ParityCorpus` enforces the
+relationship in code, by verifying the committed script against an embedded manifest of the twenty-one
+events, record for record and in order, before it will replay anything.
 
 === About this file specifically
 
