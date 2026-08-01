@@ -38,13 +38,8 @@ public class LoggingDisabledBenchmark {
 
     Logger log4j2Logger;
     org.slf4j.Logger slf4jLogger;
-    Logger log4j1Logger;
-
-    /**
-     * Isolated logger context backing the formerly-Log4j-1.x arm. Held as a field so that
-     * {@link #tearDown()} can shut it down deterministically.
-     */
-    LoggerContext log4j1Context;
+    org.apache.logging.log4j.Logger log4j1Logger;
+    private LoggerContext log4j1Context;
 
     @Setup
     public void setUp() throws Exception {
@@ -55,24 +50,17 @@ public class LoggingDisabledBenchmark {
 
         log4j2Logger = LogManager.getLogger(FileAppenderWithLocationBenchmark.class);
         slf4jLogger = LoggerFactory.getLogger(FileAppenderWithLocationBenchmark.class);
-        // The arm formerly driven by Log4j 1.x is now a native Log4j 2 arm, configured through an
-        // isolated LoggerContext so that it does not contend with the Log4j 2 arm for the global
-        // `log4j.configurationFile` selector set above.
-        final URL log4j1Config = LoggingDisabledBenchmark.class.getClassLoader().getResource("log4j12-perf2.xml");
-        log4j1Context = new LoggerContext("LoggingDisabledBenchmarkLog4j1", null, log4j1Config.toURI());
+        final URL log4j1ConfigLocation = LoggingDisabledBenchmark.class.getResource("/log4j12-perf2.xml");
+        log4j1Context = new LoggerContext("LoggingDisabledBenchmark", null, log4j1ConfigLocation.toURI());
         log4j1Context.start();
-        // The logger name intentionally names a DIFFERENT class (FileAppenderWithLocationBenchmark).
-        // This is preserved verbatim: renaming it would move these events onto another logger and
-        // therefore onto different configured levels and appenders.
         log4j1Logger = log4j1Context.getLogger(FileAppenderWithLocationBenchmark.class.getName());
     }
 
     @TearDown
     public void tearDown() {
         System.clearProperty("log4j.configurationFile");
-        System.clearProperty("logback.configurationFile");
-
         Configurator.shutdown(log4j1Context);
+        System.clearProperty("logback.configurationFile");
 
         deleteLogFiles();
     }
