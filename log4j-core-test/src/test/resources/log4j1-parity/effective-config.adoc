@@ -1253,11 +1253,18 @@ proves it harmless are recorded here rather than asserted.
 . *What was observed before the change.* Genuine Log4j 1.x reports the root logger's additivity as
   `true`. With no `additivity` attribute declared, the boot trace showed it unset --
   `additivity="null"` in the root builder line -- and the built root object reported `false`. The
-  mechanism is in Log4j 2 Core, not in these fixtures: the root-logger plugin builder holds the
-  attribute in a *primitive* `boolean` field and returns it unconverted, so an absent attribute
-  resolves to `false`. The builder for a *non-root* `<Logger>` boxes the same attribute and defaults an
-  absent value to `true`; only the root is affected. This is how every undeclared `<Root>` in the
-  repository behaves, and it is not a property of these translations.
+  mechanism is in Log4j 2 Core, not in these fixtures, and it is a deliberate asymmetry verified in
+  source rather than inferred: the root-logger plugin builder declares the attribute as a *primitive*
+  `boolean` (`log4j-core/src/main/java/org/apache/logging/log4j/core/config/LoggerConfig.java`
+  L950-951, `@PluginBuilderAttribute private boolean additivity;`, handed to the root logger
+  configuration unchanged at L1147) and returns it unconverted, so an absent attribute resolves to
+  `false`. The builder for a *non-root* `<Logger>` declares the same attribute as a boxed `Boolean`
+  (L112) and resolves an absent value to `true` (L140, `return additivity == null || additivity;`),
+  and the deprecated static root factory likewise defaults it to `true` (L1172); only the root is
+  affected. Omitting the attribute on a `<Root>` element is therefore *not* the same silence it was in
+  the superseded generation. This is how every undeclared `<Root>` in the repository behaves, it is not
+  a property of these translations, and no amount of reasoning about the file text would have revealed
+  it -- only booting the fixture did.
 . *Why the remedy is to state it rather than to record the divergence.* The governing plan requires
   every row of every effective-configuration table to match, with the Log4j 2 column populated from
   observed `-Dlog4j2.debug` output; it grants no exception for a row that is merely harmless. Leaving
@@ -1278,11 +1285,16 @@ proves it harmless are recorded here rather than asserted.
   The seven fixtures of the peer corpus were measured the same way with the same result, so the two
   corpora are treated identically.
 . *Why the row was inert either way.* Additivity controls whether a logger's events are *also* passed
-  to its parent's appenders. The root has no parent -- the boot trace reports `parent=null` -- so its
-  own flag can propagate nothing. Moreover all three configurations declare *no logger other than the
+  to its parent's appenders, and `LoggerConfig` consults it in exactly two places: the ancestor walk
+  that decides whether caller location is required (L784) and the propagation step
+  `if (additive && parent != null)` (L797). The root has no parent -- the boot trace reports
+  `parent=null` -- so the second guard can never fire and the first cannot reach an ancestor either.
+  Moreover all three configurations declare *no logger other than the
   root*, so there is no additive propagation path in the configuration at all: no child logger exists
   whose events could be duplicated or dropped. That is why the control run's empty diff is the expected
   result rather than a lucky one, and why stating the attribute carries no risk to the parity argument.
+  Inertness is not, however, a licence to leave the observed values disagreeing: the directive asks for
+  the effective additivity to be compared and to *match*, and here it does.
 
 === A note on the bridge as a reference point
 

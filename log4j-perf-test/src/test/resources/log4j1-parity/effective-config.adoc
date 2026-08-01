@@ -1213,7 +1213,9 @@ logger's builder declares its additivity attribute as a *primitive* boolean
 logger configuration at L1147), so an *undeclared* attribute lands as `false`. The *non-root* builder,
 by contrast, declares a boxed `Boolean` (L112) and resolves an absent value to `true` (L140,
 `return additivity == null || additivity;`), and the deprecated static root factory likewise defaults
-it to `true` (L1172).
+it to `true` (L1172). An omitted attribute on `<Root>` is therefore *not* the same silence it was in
+the superseded generation, and no amount of reasoning about the file text would have revealed that --
+only booting it did.
 
 The consequence, measured on every fixture: with the attribute omitted the resolved root flag reads
 `false` in all seven, against `true` in the superseded generation. That is a *literal mismatch on a row

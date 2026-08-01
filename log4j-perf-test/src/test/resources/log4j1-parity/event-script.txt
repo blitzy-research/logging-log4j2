@@ -299,8 +299,8 @@
 # superseded artefact -- never the compatibility bridge -- through this same
 # normaliser, and to PROVE the capture environment equivalent first by
 # reproducing every untouched capture in both corpora byte for byte with the
-# uncorrected script. The sibling document beside the captures records which
-# entries were corrected this way, and why.
+# uncorrected script. Two entries were corrected this way, and the sibling
+# document beside the captures records exactly which and why.
 #
 # The transient harness that drives the baseline capture is NOT COMMITTED; only
 # the normalised baseline text is. That is why the committed artefact is captured
@@ -497,7 +497,9 @@ T4|org.apache.logging.log4j.perf.jmh.FileAppenderThrowableBenchmark|ERROR|Caught
 # sources finds nothing that selects perf-log4j12-async.xml, yet the file is in
 # translation scope and so needs a script entry. Every value below is therefore
 # PRESERVED FROM AN EXISTING SOURCE rather than invented, because a preserved
-# value is traceable and an invented one is not:
+# value is traceable and an invented one is not -- and that includes the level,
+# which is taken from the same consumer as the name and the message rather than
+# from this fixture's root level:
 #
 #   logger name  PRESERVED. Taken from the only real consumer of a same-named
 #                configuration: the asynchronous throughput-and-latency test
