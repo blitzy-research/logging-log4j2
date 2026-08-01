@@ -15,16 +15,16 @@
   ~ See the License for the specific language governing permissions and
   ~ limitations under the License.
   -->
-<!DOCTYPE log4j:configuration SYSTEM "log4j.dtd">
-<log4j:configuration xmlns:log4j="http://jakarta.apache.org/log4j/">
-    <appender name="NoOp" class="org.apache.logging.log4j.perf.util.NoOpLog4jAppender">
-     </appender>
-     <appender name="ASYNC" class="org.apache.log4j.AsyncAppender">
-         <param name="BufferSize" value="262144"/>
-         <appender-ref ref="NoOp"/>
-     </appender>
-  <root>
-    <priority value="debug" />
-    <appender-ref ref="ASYNC" />
-  </root>
-</log4j:configuration>
+<Configuration>
+  <Appenders>
+    <CountingNoOp name="NoOp"/>
+    <Async name="ASYNC" blocking="true" bufferSize="262144">
+      <AppenderRef ref="NoOp"/>
+    </Async>
+  </Appenders>
+  <Loggers>
+    <Root level="debug">
+      <AppenderRef ref="ASYNC"/>
+    </Root>
+  </Loggers>
+</Configuration>

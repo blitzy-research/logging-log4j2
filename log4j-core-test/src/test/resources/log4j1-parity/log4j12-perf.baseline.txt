@@ -1,13 +1,1 @@
-<TS> DEBUG [<THREAD>] PerformanceComparison  - This is a debug message
-<TS>  INFO [<THREAD>] PerformanceComparison  - This is an info message
-<TS>  WARN [<THREAD>] PerformanceComparison  - This is a warn message
-<TS> ERROR [<THREAD>] PerformanceComparison  - This is an error message
-<TS> FATAL [<THREAD>] PerformanceComparison  - This is a fatal message
-<TS> DEBUG [<THREAD>] FileAppenderProbe  - second logger name exercising the c1 abbreviation
-<TS> DEBUG [<THREAD>] PerformanceComparison TX-0001 - event emitted while the transactionId key is populated
-<TS> DEBUG [<THREAD>] PerformanceComparison  - event emitted after the transactionId key was removed
-<TS> DEBUG [<THREAD>] child  - event from a child logger, proving additive propagation to root
-<TS> DEBUG [<THREAD>] PerformanceComparison  - event carrying a throwable
-java.lang.IllegalStateException: deterministic parity failure
-	at org.apache.logging.log4j.ParityFixture.emit(ParityFixture.java:42)
-	at org.apache.logging.log4j.ParityFixture.main(ParityFixture.java:17)
+<TS> DEBUG [<THREAD>] PerformanceComparison  - SEE IF THIS IS LOGGED 2.

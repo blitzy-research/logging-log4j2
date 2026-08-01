@@ -268,3 +268,309 @@ further normalization.
 The harness that drove the Log4j 1.x side is transient and is not committed: it necessarily used the
 `org.apache.log4j` facade, and no committed source file in this repository outside the
 `log4j-1.2-api` module may reference that package. Only the normalized capture is committed.
+
+== T10 -- `perf-log4j12-async.xml`
+
+Baseline capture:: `perf-log4j12-async.baseline.txt`
+
+The only *asynchronous* fixture in this directory, and the only one whose Log4j 1.x source wrapped a
+file appender in an asynchronous appender. Its selecting consumer is the asynchronous
+throughput-and-latency driver in the integration-test module, which names this resource for its
+Log4j 1.x arm and acquires its logger from its own class; that logger name is therefore the one the
+event script uses.
+
+=== Translation
+
+[cols="2,3",options="header"]
+|===
+| Log4j 1.x source | Log4j 2 target
+
+| `<!DOCTYPE log4j:configuration SYSTEM "log4j.dtd">`
+| removed -- the translated file carries no DOCTYPE, which is what orphans the shared `log4j.dtd`
+
+| `<log4j:configuration xmlns:log4j="...">`
+| `<Configuration>` -- the source declares no `debug` attribute, and none is invented: no `status`
+  attribute is added, so the translation introduces no diagnostic behaviour the original did not have
+
+| `<appender name="File" class="org.apache.log4j.FileAppender">`
+| `<File name="File" ...>` -- the appender is *named* `File` and the plugin element is also `<File>`;
+  both are correct
+
+| `<param name="File" value="perftest.log"/>`
+| `fileName="perftest.log"` -- the bare relative destination is held verbatim, with no directory
+  prefix added
+
+| `<param name="BufferedIO" value="true"/>`
+| `bufferedIo="true"` *plus an explicit* `immediateFlush="false"` -- see the arbitration below
+
+| `<param name="Append" value="false" />`
+| `append="false"`
+
+| `<layout class="org.apache.log4j.PatternLayout">` + `ConversionPattern`
+| `<PatternLayout><Pattern>...</Pattern></PatternLayout>`, pattern text carried across verbatim
+  including the single space before `%n`
+
+| `<appender name="ASYNC" class="org.apache.log4j.AsyncAppender">`
+| `<Async name="ASYNC" ...>`
+
+| `<param name="BufferSize" value="262144"/>`
+| `bufferSize="262144"` -- a *non-default* queue depth, so omitting it would have shrunk the queue by
+  a factor of 256
+
+| `<appender-ref ref="File"/>` nested in the asynchronous appender
+| `<AppenderRef ref="File"/>` -- required by the builder; without it the configuration fails
+
+| `<appender-ref ref="ASYNC" />` in the root
+| `<AppenderRef ref="ASYNC"/>` -- the root keeps pointing at the asynchronous appender, which keeps
+  pointing at the file appender; the two-appender chain is not flattened
+
+| `<root><priority value="debug" /></root>`
+| `<Root level="debug">` -- `priority` is the older Log4j 1.x spelling of `level`, and Log4j 2 has no
+  `priority` attribute
+
+| no `LocationInfo` parameter
+| no `includeLocation` attribute, in either polarity -- stating `false` would assert something the
+  source did not say, and stating `true` would add a caller-frame walk the original never paid for
+
+| implicit bounded queue
+| no queue element -- the array-backed blocking queue is already the default factory, so an explicit
+  element would be redundant over-specification
+|===
+
+=== Effective configuration
+
+Both columns are *observed*, and by identical code: a probe interrogates the objects the running
+configuration actually built -- never the XML. The Log4j 1.x column comes from booting the original
+fixture with the `log4j-1.2-api` bridge on the classpath and `-Dlog4j.configuration`; the Log4j 2
+column comes from booting the translated fixture with only `log4j-api` and `log4j-core` on the
+classpath and `-Dlog4j2.configurationFile`. Both runs set `-Dlog4j2.debug`, and each was repeated
+across four independent rounds with identical results.
+
+[cols="1,2,2,1",options="header"]
+|===
+| Property | Observed, Log4j 1.x | Observed, Log4j 2 | Match
+
+| Logger
+| the root is the only logger; every script logger name resolves to it -- `Adding appender named
+  [ASYNC] to loggerConfig []`, and the probe reports the resolved config as `name=[]` for all three
+  script names
+| the root is the only logger -- `Building Plugin[name=Root,
+  class=...LoggerConfig$RootLogger]`, one declared logger, and the probe reports `name=[]` for all
+  three script names
+| yes
+
+| Level
+| `Level value for root is [debug].` then `root level set to DEBUG`; probe reports `level=DEBUG`
+| `LoggerConfig$RootLogger$Builder(... level="DEBUG" ...)`; probe reports `level=DEBUG`
+| yes
+
+| Additivity
+| `true` -- the probe reports `additive=true` on the resolved root, and the script's child-logger
+  event reaches the root appender exactly once
+| `false` on the root object, because Log4j 2's root-logger plugin builder defaults the unset
+  attribute to `false`; the same child-logger event nevertheless appears exactly once
+| see the arbitration below
+
+| Appender wiring
+| root -> `ASYNC` -> `File`; probe reports the root's attached appender as `[ASYNC]` and the
+  asynchronous appender's reference as `File`
+| root -> `ASYNC` -> `File`; `createAppenderRef(ref="ASYNC", ...)` and `createAppenderRef(ref="File",
+  ...)`, and the probe reports the same wiring
+| yes
+
+| Appender classes
+| `Class name: [org.apache.log4j.FileAppender]` and `Class name:
+  [org.apache.log4j.AsyncAppender]`, built by the bridge into
+  `org.apache.logging.log4j.core.appender.FileAppender` and `...appender.AsyncAppender`
+| `Building Plugin[name=appender, class=org.apache.logging.log4j.core.appender.FileAppender]` and
+  `Building Plugin[name=appender, class=org.apache.logging.log4j.core.appender.AsyncAppender]`
+| yes
+
+| File destination
+| `Starting FileManager perftest.log`; probe reports `fileName=perftest.log append=false`
+| `Starting FileManager perftest.log`, `FileAppender$Builder(fileName="perftest.log",
+  append="false", ...)`; probe reports the same
+| yes
+
+| Layout pattern
+| `Parsing layout of class: "org.apache.log4j.PatternLayout"`, delegated to Log4j 2's own
+  `PatternLayout`; the probe reports the *rewritten* effective pattern
+  `%d %v1Level %c{1} [%t] %properties{aKey} %m %n`
+| `PatternLayout$Builder(pattern="%d %p %c{1} [%t] %X{aKey} %m %n", ...)`; the probe reports the same
+  pattern unrewritten
+| yes -- by rendered output; see the token audit below
+
+| Flush disposition
+| `immediateFlush` = `false`, *inferred* rather than declared: the source states no `ImmediateFlush`
+  parameter, and the Log4j 1.x file-appender builder forces the flag off whenever buffered I/O is on
+| `FileAppender$Builder(... immediateFlush="false" ...)`; probe reports `immediateFlush=false`
+| yes -- and this is the row most likely to catch a defect
+
+| Buffering
+| `bufferedIo` = `true` forwarded by the bridge, with the encoder buffer at 8192 bytes; no warning is
+  raised
+| `bufferedIo="true"` stated in the fixture, `bufferSize="null"` so the 8192-byte default applies;
+  probe reports `bufferSize=8192`; no warning is raised
+| yes
+
+| Asynchronous
+| yes -- `Class name: [org.apache.log4j.AsyncAppender]`, one asynchronous appender stopped at
+  shutdown, and the dispatcher thread `...AsyncAppenderEventDispatcher-1-ASYNC` starts and stops
+| yes -- likewise one asynchronous appender and the identically named dispatcher thread
+| yes
+
+| Queue depth and implementation
+| probe reports `queueCapacity=262144` and `java.util.concurrent.ArrayBlockingQueue`
+| `AsyncAppender$Builder(... bufferSize="262144" ..., BlockingQueueFactory=null, ...)`; probe reports
+  `queueCapacity=262144` and the same `ArrayBlockingQueue`
+| yes
+
+| Queue-full policy
+| probe reports `blocking=false`, because the bridge's asynchronous-appender builder leaves its flag
+  at `false` whenever the source declares no `Blocking` parameter
+| `AsyncAppender$Builder(... blocking="true" ...)`; probe reports `blocking=true`
+| see the arbitration below
+
+| Location capture
+| not requested -- the source declares no `LocationInfo` parameter, and the probe reports
+  `includeLocation=false` on the asynchronous appender
+| `AsyncAppender$Builder(... includeLocation="null" ...)`, i.e. unset, so the default applies; probe
+  reports `includeLocation=false`. The pattern contains no `%C`, `%M` or `%L`, so no caller frame is
+  walked either way
+| yes
+|===
+
+Neither of the file appender's two guard warnings is raised in either world: the
+locking-and-buffering warning requires file locking, which this fixture does not use, and the
+buffer-size-without-buffering warning requires buffered I/O to be off, which it is not.
+
+=== Rule 6 arbitration -- the queue-full policy, `blocking`
+
+Decision:: *State `blocking="true"` explicitly,* even though the bridge is observed to build the
+asynchronous appender with `blocking=false`.
+
+This is the one place in this translation where a stated value deliberately departs from the bridge's
+*observed* value, so the evidence is set out in full.
+
+. *The bridge's `false` is an artefact of the bridge, not Log4j 1.x behaviour.* The bridge's
+  asynchronous-appender builder holds its blocking flag in a freshly created boolean holder and
+  overwrites it only when the source declares a `Blocking` parameter. This fixture declares none, so
+  the holder's own `false` is forwarded. Genuine Log4j 1.x does the opposite: disassembling the
+  published Log4j 1.2.17 artefact shows its asynchronous appender's no-argument constructor storing
+  `1` -- true -- into its `blocking` field, alongside `128` for the buffer size and `0` for location
+  capture. Log4j 1.x therefore applies back-pressure by default, and `blocking="true"` reproduces
+  Log4j 1.x while `blocking="false"` would reproduce the bridge's approximation of it.
+. *The flag cannot affect rendered output, so the baseline cannot arbitrate against it.* Blocking
+  governs only what happens when the queue is *full* -- wait for space, or discard. The queue holds
+  262144 events and the script emits eleven, so the full path is never taken. A control run of the
+  translated fixture with `blocking="false"` produces a normalized capture byte-identical to the
+  committed baseline, which demonstrates directly that this attribute is invisible to the comparison.
+. *Preserving back-pressure is the conservative choice for a benchmark fixture.* These fixtures serve
+  a measurement instrument. Silently switching a saturated queue from waiting to discarding would
+  change both what is measured and what is logged, and discarding events would breach the requirement
+  that nothing be added, removed or re-levelled. Stating the attribute rather than relying on the
+  Log4j 2 default also makes the decision visible to a reviewer, which is why it is the single
+  default this translation restates.
+
+=== Rule 6 arbitration -- root additivity
+
+Decision:: *Add no `additivity` attribute,* even though the root object's observed flag differs
+between the two worlds.
+
+. *The difference is confined to an inert field.* Additivity controls whether a logger's events are
+  also passed to its *parent*. The root has no parent, so its own flag can propagate nothing. What
+  additivity has to preserve here is that a *child* logger's event still reaches the root's appender
+  exactly once, and the committed baseline exercises exactly that: the script's child-logger event
+  appears once in the Log4j 1.x capture and once in the Log4j 2 capture, in the same position.
+. *The observed values reflect two different construction paths, not two different intents.* The
+  bridge mutates the configuration's pre-existing default root object, which carries `additive=true`;
+  Log4j 2's `<Root>` plugin builder constructs a fresh root logger whose unset `additivity` attribute
+  falls to the builder's `false`. That is how *every* Log4j 2 `<Root level="..."/>` element in this
+  repository behaves; it is not a property of this translation.
+. *A control run confirms the field is inert.* Adding `additivity="true"` to the translated fixture
+  makes the probe report `additive=true`, matching the Log4j 1.x observation exactly -- and leaves the
+  normalized capture byte-identical to the committed baseline. Since the attribute buys no
+  behavioural change, it is omitted, keeping the translated fixture free of anything the Log4j 1.x
+  source did not state.
+
+=== Pattern token audit
+
+The bridge does not hand a Log4j 1.x conversion pattern to Log4j 2 verbatim: it rewrites `%p` to
+`%v1Level`, `%x` to `%ndc` and `%X` to `%properties`, then delegates to Log4j 2's own
+`PatternLayout`. The probe makes that visible -- the Log4j 1.x arm's effective pattern is observed as
+`%d %v1Level %c{1} [%t] %properties{aKey} %m %n` while the translated fixture's is observed as
+`%d %p %c{1} [%t] %X{aKey} %m %n`. Every token that is neither `%p` nor `%X` is consequently already
+being rendered by the very same Log4j 2 converter the translated fixture uses, so `%d`, `%c{1}`,
+`%t`, `%m` and `%n` are identical by construction.
+
+The two tokens whose converter identity does change are equivalent here, and the baseline capture
+demonstrates it rather than merely asserting it:
+
+[cols="1,3",options="header"]
+|===
+| Token | Evidence from the baseline capture
+
+| `%p`
+| Unpadded, unlike the width-five form used elsewhere in this directory, so no padding is involved.
+  The bridge converter renders a level converted by *name* and the native converter renders the level
+  itself; for standard levels these agree. The capture exercises all five that the root threshold
+  admits -- `DEBUG`, `INFO`, `WARN`, `ERROR`, `FATAL` -- and every one renders identically in both
+  worlds. This fixture declares no custom level, which is the only case in which the two could
+  diverge; other fixtures in this directory do declare custom levels, so the claim is scoped to this
+  fixture rather than to the module.
+
+| `%X{aKey}`
+| Both the bridge converter and the native converter take a single-key branch that appends the value
+  when present and appends nothing when absent. The capture exercises both: with the key populated
+  the line reads `... [<THREAD>] async-parity event emitted while ...`, and with it removed the line
+  reads `... [<THREAD>]  event emitted after ...` -- a *double space*, because the key resolves to the
+  empty string. Log4j 2's whole-map and multiple-key branches would instead have rendered `{}` on
+  empty data, which is precisely why the single-key form matters. That double space is correct,
+  byte-identical behaviour and must not be "tidied" away, in the pattern or in the baseline.
+|===
+
+`%c{1}` retains one name element counted from the end, so the capture shows the full simple logger
+name -- `RunLog4j1`, `AsyncAppenderProbe`, `child` -- and never a dot-abbreviated form. The pattern
+ends `%m %n`, with a real space, so every rendered line carries a *significant trailing space* before
+the line separator; it is preserved in the fixture and in the baseline, and must not be trimmed. No
+`%x`, bare `%X`, `%properties`, `%v1Level`, `%r`, `%C`, `%M` or `%L` token appears in this fixture,
+and none was introduced. Because the pattern names no explicit throwable specifier, a plain throwable
+converter is appended implicitly -- identically in both worlds, since both delegate to the same
+`PatternLayout` -- so the throwable renders after the line separator with no jar-and-version suffixes,
+and is compared byte for byte.
+
+=== Rolling policies
+
+None apply. The fixture wraps a plain Log4j 1.x `FileAppender` in a Log4j 1.x `AsyncAppender` and
+declares no `DailyRollingFileAppender`, no Log4j 1.x `RollingFileAppender`, and no `MaxFileSize`,
+`MaxBackupIndex` or `DatePattern` option. No rolling appender, triggering policy or rollover strategy
+was introduced.
+
+=== Event script behind the baseline capture
+
+The capture was produced by replaying a fixed script whose constants were shared by both worlds, so
+that any difference in rendered output would be attributable to the configuration translation alone:
+one `TRACE` event below the root threshold, which both worlds suppress; one event at each of `DEBUG`,
+`INFO`, `WARN`, `ERROR` and `FATAL` on
+`org.apache.logging.log4j.core.async.perftest.RunLog4j1`, the logger name the selecting consumer
+acquires, with the `INFO` message taken verbatim from that consumer's own latency-message constant;
+one event on a second, differently shaped logger name so that name abbreviation is exercised; one
+event with the `aKey` key populated and one with it removed; one event from a child logger, which
+additive propagation must deliver to the root appender exactly once; and one event carrying a
+throwable whose stack trace is pinned to fixed frames so that throwable rendering is compared without
+needing any further normalization.
+
+Two capture disciplines were mandatory for this fixture specifically, because it is asynchronous
+*and* does not flush per event. First, its destination is shared with the synchronous fixture beside
+it, so the destination file is deleted immediately before each boot and the two are never booted
+concurrently. Second, when the last emission returns, events may still be queued and rendered bytes
+may still be sitting in the encoder buffer, so each capture stops the logger context before reading
+the file -- which drains the queue into the file appender and then flushes it. Waiting on a timer
+instead would make the capture a race rather than a result, and relaxing the flush setting or
+shrinking the queue to make output appear sooner would corrupt the very disposition being preserved.
+
+The harness that drove the Log4j 1.x side is transient and is not committed: it necessarily used the
+`org.apache.log4j` facade, and no committed source file in this repository outside the
+`log4j-1.2-api` module may reference that package. Only the normalized capture is committed. Both
+arms were replayed four times; all eight normalized captures are byte-identical, so the empty diff is
+reproducible rather than incidental.

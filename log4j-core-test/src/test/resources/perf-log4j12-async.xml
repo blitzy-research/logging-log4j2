@@ -15,22 +15,20 @@
   ~ See the License for the specific language governing permissions and
   ~ limitations under the License.
   -->
-<!DOCTYPE log4j:configuration SYSTEM "log4j.dtd">
-<log4j:configuration xmlns:log4j="http://jakarta.apache.org/log4j/">
-    <appender name="File" class="org.apache.log4j.FileAppender">
-        <param name="File" value="perftest.log" />
-        <param name="BufferedIO" value="true"/>
-        <param name="Append" value="false" />
-        <layout class="org.apache.log4j.PatternLayout">
-          <param name="ConversionPattern" value="%d %p %c{1} [%t] %X{aKey} %m %n"/>
-        </layout>
-     </appender>
-     <appender name="ASYNC" class="org.apache.log4j.AsyncAppender">
-         <param name="BufferSize" value="262144"/>
-         <appender-ref ref="File"/>
-     </appender>
-  <root>
-    <priority value="debug" />
-    <appender-ref ref="ASYNC" />
-  </root>
-</log4j:configuration>
+<Configuration>
+  <Appenders>
+    <File name="File" fileName="perftest.log" bufferedIo="true" append="false" immediateFlush="false">
+      <PatternLayout>
+        <Pattern>%d %p %c{1} [%t] %X{aKey} %m %n</Pattern>
+      </PatternLayout>
+    </File>
+    <Async name="ASYNC" blocking="true" bufferSize="262144">
+      <AppenderRef ref="File"/>
+    </Async>
+  </Appenders>
+  <Loggers>
+    <Root level="debug">
+      <AppenderRef ref="ASYNC"/>
+    </Root>
+  </Loggers>
+</Configuration>
