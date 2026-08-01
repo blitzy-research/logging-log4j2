@@ -95,9 +95,14 @@ stopping the logger context and reading back the rendered file:
 
 | *Bridge*
 | The same unmodified 1.x fixture through the `log4j-1.2-api` compatibility bridge, selected with
-  `-Dlog4j.configuration` plus the experimental compatibility flag
-| The path these fixtures actually took at the base commit. Used only to corroborate, and to expose
-  two places where the bridge is an *approximation* of Log4j 1.x rather than a reproduction of it
+  `-Dlog4j.configuration` plus the experimental compatibility flag. *This arm is an arrangement the
+  transient harness constructed on purpose; it is NOT a path any of these three fixtures took in the
+  repository.* At the base commit none of T8, T9 or T10 was on the runtime classpath of any module that
+  declared the bridge -- as the consumer discussion under each fixture below records -- so nothing here
+  ran through the bridge unless the harness deliberately routed it there
+| *Corroboration only, never authority.* Its sole purpose is to expose two places where the bridge is an
+  *approximation* of Log4j 1.x rather than a reproduction of it. Where the two 1.x arms disagree, the
+  genuine artefact decides and the bridge is recorded as the deviation
 
 | *Log4j 2*
 | The translated fixture in an isolated `LoggerContext`, with only `log4j-api` and `log4j-core` on
@@ -105,11 +110,19 @@ stopping the logger context and reading back the rendered file:
 | The *Observed, Log4j 2* column, and the rendered output that is diffed against the baseline
 |===
 
-*A row is accepted only when the Log4j 1.x-observed and Log4j 2-observed values agree.* Exactly one
-row in this corpus does not agree on its raw value -- root additivity -- and it is not waved through:
-it is reported as observed, shown to be behaviourally inert, and arbitrated in Record 4 against the
-baseline. Additivity is *asserted from observation* in all three tables rather than assumed from a
-documented default.
+*A row is accepted only when the Log4j 1.x-observed and Log4j 2-observed values agree.* *Every row in
+all three tables agrees* -- there is no row accepted on the strength of a difference being argued
+inert.
+
+Root additivity is the one row where that took a change to the fixtures, and the history is recorded
+rather than erased, because it is why one translated attribute looks redundant. With the attribute
+omitted, the observed values were `true` in Log4j 1.x against `false` in Log4j 2, and the row was
+originally accepted on the grounds that the flag is inert for a logger with no parent. That reasoning
+was sound but insufficient: the requirement is that the observed values *match*, not that a mismatch be
+harmless. All three fixtures now state `additivity="true"`, both observed values are `true`, and Record 4
+carries the measurement plus the proof that stating the attribute changes no rendered byte. Additivity
+is *asserted from observation* in all three tables -- never assumed from a documented default, which for
+the root logger is not the value one would expect.
 
 The harness that drove the two Log4j 1.x arms is transient and *is not committed*. It necessarily
 used the `org.apache.log4j` facade, and no committed source file in this repository outside the
@@ -132,7 +145,12 @@ Exactly four tokens are normalized, and nothing else:
 
 | `%t` thread name
 | `<THREAD>`
-| Pool-assigned and harness-dependent, non-deterministic.
+| The *producing* thread: the one that emitted the event, recorded when the event was *constructed*.
+  It is *never* the asynchronous dispatcher that later writes the event out -- which matters here,
+  because T10 wraps its appender in the asynchronous one, and both generations capture the producer's
+  name before the event is enqueued. Only the *value* is non-deterministic, being harness-assigned and
+  run-dependent; the fact that it identifies the producer is preserved, and the sibling corpus records
+  the observation that establishes it.
 
 | `%L` source line number
 | `<LINE>`
@@ -160,6 +178,20 @@ formatting noise and are not:
 Both fall out of correct, byte-identical behaviour, and both are explained in Record 3. Trimming,
 right-stripping or collapsing whitespace in a baseline is a defect. `grep -nP '[ \t]$'` is *expected*
 to match the T9 and T10 baselines.
+
+Because that expectation collides with the repository's standard whitespace check, the root
+`.gitattributes` exempts *only* `+*.baseline.txt+` under this directory and its sibling from the
+end-of-line blank check:
+
+----
+/log4j-core-test/src/test/resources/log4j1-parity/*.baseline.txt whitespace=-blank-at-eol
+----
+
+Nothing else is exempted -- not this document, not any source file, and no other whitespace check on
+these files -- and *no capture byte is altered*: `git diff --check` passes with the trailing space still
+present in both the file and its staged blob. The sibling corpus records the full reasoning, including
+why a whitespace-safe re-encoding of the captures was rejected in favour of keeping the payload
+literal.
 
 == Capture ordering and capture hygiene
 
@@ -205,9 +237,10 @@ it:
 
 == The event script, and where it lives
 
-Each fixture is exercised by one event, chosen so that the emission is the one its real consumer
-makes. The logger names, levels and messages are carried across character for character; logger names
-in particular are never "improved".
+Each fixture is exercised by the emission its real consumer makes, and T8 carries *one additional
+event beyond that*, for the reason given in the subsection below on the field-width control event. The
+logger names, levels and messages of the consumer-derived events are carried across character for
+character; logger names in particular are never "improved".
 
 One case makes that rule load-bearing rather than decorative. T8's consumer acquires *three* loggers,
 one per logging generation, and gives all three the *identical* name, derived from the same class.
@@ -216,39 +249,108 @@ against each other, and the arms stay comparable only while they log under a sha
 therefore carried across exactly as it stands, and one name serving several generations is never
 treated as something to disambiguate.
 
-[cols="1,3,1,2",options="header"]
+[cols="1,3,1,2,2",options="header"]
 |===
-| ID | Logger name | Level | Message
+| ID | Logger name | Level | Message | Origin
 
 | T8
 | `org.apache.logging.log4j.PerformanceComparison`
 | `DEBUG`
 | `SEE IF THIS IS LOGGED 2.`
+| consumer emission
+
+| T8
+| `org.apache.logging.log4j.PerformanceComparison` -- the same name again, so that the level field is
+  the only difference between the two captured lines
+| `WARN`
+| `Field width control event`
+| field-width control
 
 | T9
 | `org.apache.logging.log4j.core.async.perftest.RunLog4j1`
 | `INFO`
 | `Short msg`
+| consumer emission
 
 | T10
 | `org.apache.logging.log4j.core.async.perftest.RunLog4j1`
 | `INFO`
 | `Short msg`
+| consumer emission
 |===
 
 T8's level and message come from its consumer's own emission, which concatenates its argument rather
 than parameterising it. That concatenation is preserved: no argument anywhere in this migration was
 converted to `{}` parameterisation, so the recorded message is the concatenated result. T9's and
 T10's `INFO` level likewise comes from their consumer, whose three emissions are all at `INFO`, and
-the message is that consumer's own latency-message constant. The sibling corpus records a different
-level for one of its own fixtures because that fixture has no in-module consumer to inherit one from;
-that is a sound choice for a different situation, and the two corpora are deliberately not
-harmonised.
+the message is that consumer's own latency-message constant. The sibling corpus carries one entry from
+that very same consumer -- its own copy of the asynchronous fixture has no in-module consumer to
+inherit from, so name, level and message are all carried from this one -- and it records the same
+`INFO`. A level may not be carried from one source while the name and the message are carried from
+another, so the agreement between the two corpora on this single emission is a *consistency check*
+rather than a coincidence: if one of them ever records a different level for it, one of them is wrong.
 
-*The event script lives as Java constants inside*
+=== The field-width control event, and why T8 needs one
+
+T8's layout renders the level through `+%5p+` -- a five-character minimum field. Its consumer's own
+emission is at `DEBUG`, which is *exactly five characters*, so it needs no padding and its bytes are
+identical to those the same event would produce through a bare `+%p+`. A capture consisting only of
+that event therefore cannot see the field width at all: deleting the width from the translated pattern
+would have left the baseline unchanged, and the corpus would have kept passing.
+
+The hole is closed by replaying *one additional event at `WARN`* -- four characters -- on the same
+logger name, so that the level field is the only difference between the two captured lines. Both forms
+were rendered by the superseded generation during the baseline capture, so what follows is an
+observation rather than a prediction.
+
+Rendered through the width T8 actually configures, `+%5p+`, which is the committed baseline's second
+line byte for byte:
+
+[source,text]
+----
+<TS>  WARN [<THREAD>] PerformanceComparison  - Field width control event
+----
+
+Rendered through a bare `+%p+`, with the width dropped:
+
+[source,text]
+----
+<TS> WARN [<THREAD>] PerformanceComparison  - Field width control event
+----
+
+The two differ by exactly one byte -- 145 against 144 for the whole two-line capture -- and that byte
+is the space that right-aligns `WARN` in the five-character field. It is the entirety of the evidence
+that the width survived translation, and it is now in the corpus.
+
+Three things this control event is *not*:
+
+* *It is not a re-levelled consumer emission.* The consumer's own `DEBUG` event is still replayed,
+  first and unchanged. The control is an *additional* event, at a level T8's `debug` root already
+  admits, and no consumer is claimed to make it.
+* *It is not tuning to make output appear.* It changes no appender option, no root level, no buffer
+  size and no flush setting, so the third capture discipline above still holds in full.
+* *It is not owed by T9 or T10.* Their pattern renders the level through a bare `+%p+`, so there is no
+  width to verify; neither carries a control event and neither baseline changed.
+
+=== Where the script lives
+
+*The event script is to live as Java constants inside*
 `log4j-core-test/src/test/java/org/apache/logging/log4j/core/config/Log4j1MigratedConfigParityTest.java`,
-never as a resource file in this directory. The sibling `log4j-perf-test` corpus keeps an equivalent
-script as a resource, and this module cannot reuse it, for three independent reasons:
+never as a resource file in this directory.
+
+[IMPORTANT]
+.State of the consuming test at this checkpoint
+====
+*That test class does not exist yet.* `Log4j1MigratedConfigParityTest.java` is absent from the tree, so
+the table above is currently the *only* record of the script, and it is deliberately complete for that
+reason. Everything this document says about what the consuming test does is a *contract the class must
+honour when it is written*, not a description of code already running. The corpus precedes the test on
+purpose: the baselines had to be captured while the Log4j 1.x classpath still existed, which is no longer
+the case, whereas the test can be written at any time afterwards against the committed evidence.
+====
+
+The sibling `log4j-perf-test` corpus keeps an equivalent script as a resource, and this module cannot
+reuse it, for three independent reasons:
 
 . `log4j-perf-test` is itself acquiring a test-scope dependency *on* `log4j-core-test`, so an edge in
   the reverse direction would be a hard Maven dependency cycle.
@@ -262,8 +364,10 @@ document -- and no fifth.
 
 == Contract for the consuming test
 
-This document is self-sufficient by design, because the test that consumes the corpus is written
-against it. The contract it must honour:
+This document is self-sufficient by design, because the test that will consume the corpus is to be
+written against it -- and, as recorded above, that test is *not yet in the tree*. Every item below is a
+requirement on code still to be written rather than a description of code that exists. The contract it
+must honour:
 
 * *Boot each fixture in an isolated `LoggerContext`,* using
   `new LoggerContext(name, null, uri)`, `start()`, and `Configurator.shutdown(ctx)` to tear it down.
@@ -279,6 +383,13 @@ against it. The contract it must honour:
 * *Never trim, strip or collapse the text it compares.* The T9 and T10 baselines carry a significant
   trailing space, and normalising it away would make the comparison pass while hiding a real
   difference.
+* *Verify T8's level field by rendering it, not by reading the pattern.* Replay both of T8's scripted
+  events and compare the *whole* of `log4j12-perf.baseline.txt` -- never only its first line, never
+  only a prefix. The `WARN` control line is the corpus's sole evidence that the `+%5p+` field width
+  survived translation, so a comparison that stops short of it would pass just as happily against a
+  translated pattern whose width had been deleted. Asserting that the configured pattern *string*
+  contains `+%5p+` is not a substitute: it reads the translation instead of observing what the
+  translation renders.
 * *Stay within this module's API surface.* `log4j-core-test` compiles at release 8, so the test may
   not use `var`, `Files.readString`, `Files.writeString`, `String.strip`, text blocks, or
   `List.of`/`Set.of`/`Map.of`. `String.strip` and `String.trim` are doubly excluded, for the
@@ -351,7 +462,8 @@ Baseline capture: `log4j12-perf.baseline.txt`. Synchronous.
 | `<AppenderRef ref="TestLogfile"/>` -- case change only
 
 | `<root><level value="debug"/></root>`
-| `<Root level="debug">`
+| `<Root level="debug" additivity="true">` -- the level attribute replaces the nested element, and
+  `additivity="true"` states the value Log4j 1.x's root already had; see Record 4, Decision 4
 |===
 
 === Observed boot output
@@ -369,7 +481,7 @@ Starting FileManager target/testlog4j.log
 Building Plugin[name=AppenderRef, class=org.apache.logging.log4j.core.config.AppenderRef].
 createAppenderRef(ref="TestLogfile", level="null", Filter=null)
 Building Plugin[name=Root, class=org.apache.logging.log4j.core.config.LoggerConfig$RootLogger].
-LoggerConfig$RootLogger$Builder(additivity="null", level="DEBUG", levelAndRefs="null",
+LoggerConfig$RootLogger$Builder(additivity="true", level="DEBUG", levelAndRefs="null",
     includeLocation="null", ={TestLogfile}, ...)
 ----
 
@@ -405,9 +517,10 @@ rendered output.
 
 | Additivity
 | `true` -- read from the running root logger; the fixture declares no `additivity`
-| declared additivity is *unset* (`additivity="null"` in the trace); the built root object reports
-  `false`, because the root-logger plugin builder holds this attribute in a primitive field
-| inert -- Record 4
+| `true` -- read from the running root logger. The translation *declares* `additivity="true"`, which the
+  root builder trace above echoes, because the root-logger plugin builder holds this attribute in a
+  primitive field and an omitted attribute would resolve to `false`; see Record 4
+| *yes* -- both observed `true`
 
 | Appender(s)
 | `TestLogfile`, attached to the root, writing `target/testlog4j.log`
@@ -423,7 +536,9 @@ rendered output.
 | Layout pattern
 | `%d %5p [%t] %c{1} %X{transactionId} - %m%n`
 | `%d %5p [%t] %c{1} %X{transactionId} - %m%n` -- identical text, and identical rendering; audited
-  token by token in Record 3
+  token by token in Record 3. The `+%5p+` field width is confirmed by *rendered output*, not by
+  reading the attribute back: the baseline's `WARN` control line carries the right-aligning space that
+  a bare `+%p+` would not produce
 | yes
 
 | Buffering and flush disposition
@@ -450,10 +565,18 @@ The migrated fixture renders, after normalization:
 [source,text]
 ----
 <TS> DEBUG [<THREAD>] PerformanceComparison  - SEE IF THIS IS LOGGED 2.
+<TS>  WARN [<THREAD>] PerformanceComparison  - Field width control event
 ----
 
-which is byte-identical to `log4j12-perf.baseline.txt`. *The normalized diff is empty.* The double
-space before the `-` is correct and is explained in Record 3.
+which is byte-identical to `log4j12-perf.baseline.txt`, all 145 bytes of it. *The normalized diff is
+empty.* Two details of those bytes are load-bearing rather than incidental:
+
+* The *double space* before each `-` is correct, and is explained in Record 3.
+* The *single leading space* before `WARN` on the second line is the `+%5p+` field width doing its
+  work. `DEBUG` on the first line already fills the five-character field and so sits flush against its
+  neighbouring spaces; `WARN` is four characters and is right-aligned into the field. Delete the width
+  from the translated pattern and that byte disappears -- which is exactly what the control event
+  exists to catch.
 
 == T9 -- `perf-log4j12.xml`
 
@@ -497,8 +620,9 @@ corpus.
 | `<AppenderRef ref="File"/>`
 
 | `<root><priority value="debug" /></root>`
-| `<Root level="debug">` -- `priority` is the older Log4j 1.x spelling of `level`, and Log4j 2 has no
-  `priority` attribute
+| `<Root level="debug" additivity="true">` -- `priority` is the older Log4j 1.x spelling of `level`, and
+  Log4j 2 has no `priority` attribute; `additivity="true"` states the value Log4j 1.x's root already
+  had, per Record 4, Decision 4
 |===
 
 === Observed boot output
@@ -513,7 +637,7 @@ Starting FileManager perftest.log
 Building Plugin[name=AppenderRef, class=org.apache.logging.log4j.core.config.AppenderRef].
 createAppenderRef(ref="File", level="null", Filter=null)
 Building Plugin[name=Root, class=org.apache.logging.log4j.core.config.LoggerConfig$RootLogger].
-LoggerConfig$RootLogger$Builder(additivity="null", level="DEBUG", levelAndRefs="null",
+LoggerConfig$RootLogger$Builder(additivity="true", level="DEBUG", levelAndRefs="null",
     includeLocation="null", ={File}, ...)
 ----
 
@@ -543,8 +667,9 @@ No configuration warning was emitted; only the unrelated capture-classpath warni
 
 | Additivity
 | `true` -- read from the running root logger; the fixture declares no `additivity`
-| declared additivity *unset*; the built root object reports `false` for the reason given under T8
-| inert -- Record 4
+| `true` -- read from the running root logger. The translation *declares* `additivity="true"`, echoed by
+  the trace above, for the reason given under T8; see Record 4
+| *yes* -- both observed `true`
 
 | Appender(s)
 | `File`, attached to the root, writing `perftest.log`
@@ -639,7 +764,8 @@ the additions are listed here.
   would be redundant over-specification
 
 | `<root><priority value="debug" /></root>`
-| `<Root level="debug">`
+| `<Root level="debug" additivity="true">` -- as in T9, with `additivity="true"` stating the value
+  Log4j 1.x's root already had; see Record 4, Decision 4
 |===
 
 === Observed boot output
@@ -657,7 +783,7 @@ AsyncAppender$Builder(={File}, errorRef="null", blocking="true", shutdownTimeout
     bufferSize="262144", name="ASYNC", includeLocation="null", ..., BlockingQueueFactory=null, ...)
 createAppenderRef(ref="ASYNC", level="null", Filter=null)
 Building Plugin[name=Root, class=org.apache.logging.log4j.core.config.LoggerConfig$RootLogger].
-LoggerConfig$RootLogger$Builder(additivity="null", level="DEBUG", levelAndRefs="null",
+LoggerConfig$RootLogger$Builder(additivity="true", level="DEBUG", levelAndRefs="null",
     includeLocation="null", ={ASYNC}, ...)
 ----
 
@@ -689,8 +815,9 @@ configuration warning was emitted; only the unrelated capture-classpath warning 
 
 | Additivity
 | `true` -- read from the running root logger; the fixture declares no `additivity`
-| declared additivity *unset*; the built root object reports `false` for the reason given under T8
-| inert -- Record 4
+| `true` -- read from the running root logger. The translation *declares* `additivity="true"`, echoed by
+  the trace above, for the reason given under T8; see Record 4
+| *yes* -- both observed `true`
 
 | Appender(s)
 | root -> `ASYNC` -> `File`; the asynchronous appender's only reference is `File`, which writes
@@ -823,12 +950,34 @@ lost.* A repository-wide search now finds exactly one `log4j.dtd`, the bridge's.
   no other fixture.
 * This directory is *not published.* `log4j-core-test/pom.xml` contains no `test-jar` execution and no
   `maven-jar-plugin` execution, so nothing outside the module could ever have consumed the fixture.
-* *Atomicity:* the deletion *followed* the three translations and never preceded them. Deleting the
-  DTD first would have made XML parsing of those fixtures fail on an unresolvable system entity.
-* For completeness, a repository-wide search finds seven further referrers, all of them Log4j 1.x
-  configurations under `log4j-perf-test/src/main/resources`. Those belong to a different module; all
-  seven lose their DOCTYPE in this same atomic change; and `log4j-perf-test` never contained a
-  `log4j.dtd` of its own, so none of them was ever resolving this module's copy.
+* *Commit sequencing, stated exactly.* The deletion did not follow all three translations. The DTD was
+  removed in the *same* commit that translated T8 and T9 -- `81a8fda59`, whose file list for this
+  directory is the deleted `log4j.dtd` together with the modified `log4j12-perf.xml` and
+  `perf-log4j12.xml` -- so neither of those two ever stood in the tree as a Log4j 1.x document with its
+  DTD already gone. T10, `perf-log4j12-async.xml`, was translated one commit later, in `dc38eb833`. For
+  that single intermediate commit T10 still carried its Log4j 1.x DOCTYPE while this module's copy of
+  the DTD was already deleted.
+* *Why that intermediate window changed nothing.* Three independent reasons, recorded rather than
+  glossed. First, the governing plan executes this migration as *one* change and validates the final
+  state, not the reactor's intermediate commits. Second, nothing automated parsed these fixtures: at the
+  base commit the only file in this module naming any of the three is the hand-driven shell script
+  `src/test/resources/perf/runResponseTm.sh` -- no Java test and no POM references them. Third, a
+  co-located DTD was never the resolution target to begin with. A Log4j 1.x XML boot resolves the system
+  identifier through `Log4jEntityResolver`, which matches *any* system id ending in `log4j.dtd` and
+  serves the classpath resource `/org/apache/log4j/xml/log4j.dtd`; when that resource is absent it warns
+  `+Could not find [log4j.dtd] using [{}] class loader, parsed without DTD.+`, substitutes an empty
+  entity and parses on. An unresolvable system entity is therefore a status warning in Log4j 1.x, not a
+  parse failure -- so the sequencing carried no risk of the kind a stricter reading would suggest.
+* *The repository-wide census, in full.* At the base commit the string `log4j.dtd` occurred in
+  *forty-two* files: 31 under `log4j-1.2-api/`, 7 Log4j 1.x configurations under
+  `log4j-perf-test/src/main/resources`, and the 4 files of this module already listed. The bridge's 31
+  are 28 Log4j 1.x XML fixtures of that module's own test suite plus three of its sources --
+  `DOMConfigurator.java`, `Log4jEntityResolver.java` and `XmlConfiguration.java` -- and they are out of
+  scope by design: that module implements the Log4j 1.x namespace, ships the one surviving `log4j.dtd`,
+  and is the reason deleting this module's copy costs no capability. Only the perf-test seven and this
+  module's three configurations are in scope; all ten lose their DOCTYPE in this migration.
+  `log4j-perf-test` never contained a `log4j.dtd` of its own, and this module's only copy is the one
+  deleted here, so after the deletion no in-scope fixture is left resolving a sibling file.
 
 === No replacement was authored
 
@@ -869,9 +1018,11 @@ Two consequences follow, and they are what make this audit exact:
 . *Because the bridge delegates to Log4j 2's own `PatternLayout`, every token that is neither `%p` nor
   `%X` was already being rendered by the very converter the migrated fixture now uses.* `%d`, `%t`,
   `%c{1}`, `%m` and `%n` are therefore byte-identical *by construction*, not by inspection.
-. *Padding and precision survive the rewrite,* because the width is captured and re-emitted: `%5p`
-  becomes `%5v1Level`, as the observed T8 pattern shows, and the same pattern parser and
-  field-formatting machinery then formats both.
+. *Padding and precision survive the rewrite* as a matter of mechanism, because the width is captured
+  and re-emitted: `%5p` becomes `%5v1Level`, as the observed T8 pattern shows, and the same pattern
+  parser and field-formatting machinery then formats both. *This mechanism is corroboration, not the
+  evidence.* Rewrite mechanics cannot establish rendered padding, and the committed captures cannot
+  either -- see the measurement below, which supplies the observed rendering the rule actually demands.
 
 === The two tokens whose converter identity changes
 
@@ -884,10 +1035,12 @@ Two consequences follow, and they are what make this audit exact:
   the native converter is keyed `p` and `level` and appends the event's level directly. Both end up
   rendering the level's own string form, so they agree for every standard level. The only case in
   which they could diverge is a custom level. *T8, T9 and T10 declare no custom level, and the
-  replayed events use only the standard levels `DEBUG` and `INFO`* -- which is the precise scope of
-  this claim. It is deliberately not stated more broadly: this very directory contains unrelated
-  custom-level fixtures, namely `log4j-customLevel.xml`, `log4j-customLevels.xml`,
-  `log4j-customLevelsOverride.xml` and `log4j-customLevelsWithFilters.xml`.
+  replayed events use only the standard levels `DEBUG`, `INFO` and `WARN`* -- which is the precise
+  scope of this claim. It is deliberately not stated more broadly: this very directory contains
+  unrelated custom-level fixtures, namely `log4j-customLevel.xml`, `log4j-customLevels.xml`,
+  `log4j-customLevelsOverride.xml` and `log4j-customLevelsWithFilters.xml`. The `+5+` in T8's `+%5p+`
+  is a separate claim from the converter's identity, and it is settled separately in the section
+  immediately below.
 
 | `+%X{transactionId}+` / `+%X{aKey}+`
 | Both converters take a *single-key* branch that appends the value when the key is present and
@@ -897,6 +1050,84 @@ Two consequences follow, and they are what make this audit exact:
   `%X` or a multi-key form, so neither takes those branches. With the key unset, as in both captures,
   both worlds render *the empty string*.
 |===
+
+=== The `+%5p+` width is verified by rendering, not by reading the rewrite
+
+The rewrite evidence above establishes that a width *survives* translation, because the capture group is
+re-emitted -- `+%5p+` becomes `+%5v1Level+`. It does *not* establish that the width is still *in* the
+translated pattern, and the two are different claims. Glossing over the distinction would have cost this
+corpus its only `+%5p+` evidence:
+
+[WARNING]
+.A five-character level cannot see a five-character field
+====
+`DEBUG` is exactly five characters. So are `ERROR` and `FATAL`. Rendered through a five-character
+minimum field, a five-character level needs no padding, so its bytes are *identical* to those of the
+same level rendered through a bare `+%p+`.
+
+T8 is the only fixture here whose pattern carries a width, and its consumer's own emission is at
+`DEBUG`. Had the capture stopped there, deleting the `+5+` from the translated pattern would have left
+the baseline unchanged -- and the reasoning "`the baseline shows DEBUG with no padding, and a shorter
+level would have been right-aligned identically by both generations`" would have been self-defeating,
+because it concedes that no shorter level was ever rendered.
+====
+
+*The hole is closed by rendering a shorter standard level.* T8's script carries a `WARN` field-width
+control event and its rendered bytes are committed as the baseline's second line. Both forms were
+produced by the superseded generation during the baseline capture, so the difference below is an
+observation:
+
+[cols="2,3,1",options="header"]
+|===
+| Pattern actually configured | Rendered bytes for the same `WARN` event | Verdict
+
+| `+%d %5p [%t] %c{1} %X{transactionId} - %m%n+`
+| `+<TS>  WARN [<THREAD>] PerformanceComparison  - Field width control event+`
+| the committed baseline
+
+| `+%d %p [%t] %c{1} %X{transactionId} - %m%n+` -- the width dropped
+| `+<TS> WARN [<THREAD>] PerformanceComparison  - Field width control event+`
+| *diff is non-empty*
+|===
+
+One byte apart: the space that right-aligns `WARN` in the field. T9 and T10 are owed no such control,
+because their pattern renders the level through a bare `+%p+` and there is no width to verify.
+
+==== The same level column, measured at every standard level
+
+The control above proves the width for the one shorter level this corpus replays. The padding rule
+behind it was measured independently as well: T8's conversion pattern was rendered for T8's own logger
+and message through the *genuine Log4j 1.2.17 layout* and through Log4j 2's own `PatternLayout`, at
+every standard level, and the results byte-compared. The leading `+%d+` is dropped from the probe so
+that wall-clock skew between the two renders cannot defeat a byte comparison; every other token,
+including the `+%5p+` under test, is the fixture's own.
+
+[cols="1,2,2,1",options="header"]
+|===
+| Level | Genuine 1.2.17 level column | Log4j 2 level column | Identical
+
+| `FATAL` | `+FATAL+` | `+FATAL+` | yes
+| `ERROR` | `+ERROR+` | `+ERROR+` | yes
+| *`WARN`* | `+ WARN+` -- **one leading pad space** | `+ WARN+` | *yes*
+| *`INFO`* | `+ INFO+` -- **one leading pad space** | `+ INFO+` | *yes*
+| `DEBUG` | `+DEBUG+` | `+DEBUG+` | yes
+| `TRACE` | `+TRACE+` | `+TRACE+` | yes
+|===
+
+`WARN` and `INFO` are the only standard levels shorter than the field, and both right-align to width
+five with exactly one leading space, in *both* generations. The comparison was not confined to the level
+column: the whole rendered line was identical at every one of the six levels, double space before the
+`-` separator included.
+
+The unqualified `+%p+` of T9 and T10 was measured the same way, with their own logger and message, and
+it *pads in neither* generation -- `WARN` and `INFO` render as four characters on both sides, and every
+whole line is identical at all six levels, trailing space before the separator included. The two
+families' level columns are therefore genuinely different widths by design, and each is preserved as it
+stood.
+
+*Observed in the fixtures themselves:* `DEBUG` and `WARN` for T8 and `INFO` for T9 and T10, in the same
+columns as before the translation -- with the padding behaviour behind T8's column established by the
+measurement above instead of predicted from the rewrite map.
 
 === `%c{1}` renders the full simple logger name
 
@@ -945,6 +1176,9 @@ tie-breaker. Each open question is recorded below as a decision with its evidenc
 normalized diff came back empty, so none of these decisions was made to *rescue* a failing
 comparison; they were made to choose between alternatives the comparison could not distinguish, and
 the tie-break criterion was then "reproduce genuine Log4j 1.x rather than an approximation of it".
+Decision 4 is the one case where the rendered comparison was blind to the choice *and* the
+effective-configuration table was not: the render could not tell the two variants apart, so the
+tie-break fell to the observed effective configuration, which could.
 
 === Decision 1 -- T8 omits `bufferedIo` entirely
 
@@ -1009,25 +1243,46 @@ event* -- a change in the exact disposition a benchmark fixture exists to hold s
   back-pressure and to make that visible to a reviewer. Discarding events would also breach the
   requirement that nothing be added, removed or re-levelled.
 
-=== Decision 4 -- no `additivity` attribute is added, although the observed root flag differs
+=== Decision 4 -- `additivity="true"` is stated explicitly on all three translated roots
 
-*Decision: add nothing.* This is the one row in the corpus whose raw observed values differ, and it is
-recorded rather than smoothed over.
+*Decision: state the attribute.* Every one of T8, T9 and T10 now carries `additivity="true"` on its
+`<Root>` element. This is the one row in the corpus that took a change to the fixtures to bring the two
+observed columns into agreement, and both the measurement that forced it and the measurement that
+proves it harmless are recorded here rather than asserted.
 
-. *What was observed.* Genuine Log4j 1.x reports the root logger's additivity as `true`. The migrated
-  fixtures declare no `additivity` attribute -- the boot trace shows it unset -- and the built root
-  object reports `false`, because Log4j 2's root-logger plugin builder holds this attribute in a
-  primitive field, so an unset attribute yields `false`. This is how *every* `<Root>` element in this
-  repository behaves; it is not a property of these translations.
-. *Why the difference is inert here.* Additivity controls whether a logger's events are *also* passed
-  to its parent's appenders. The root has no parent, so its own flag can propagate nothing. Moreover
-  all three configurations declare *no logger other than the root*, so there is no additive
-  propagation path in the configuration at all -- there is no child logger whose events could be
-  duplicated or dropped.
-. *A control run confirms it is inert.* Adding `additivity="true"` to a copy of T8 makes the built root
-  report `true`, matching genuine Log4j 1.x exactly, *and leaves the normalized capture byte-identical
-  to the committed baseline.* The attribute therefore buys no behavioural change, so it is omitted,
-  keeping each translated fixture free of anything its Log4j 1.x source did not state.
+. *What was observed before the change.* Genuine Log4j 1.x reports the root logger's additivity as
+  `true`. With no `additivity` attribute declared, the boot trace showed it unset --
+  `additivity="null"` in the root builder line -- and the built root object reported `false`. The
+  mechanism is in Log4j 2 Core, not in these fixtures: the root-logger plugin builder holds the
+  attribute in a *primitive* `boolean` field and returns it unconverted, so an absent attribute
+  resolves to `false`. The builder for a *non-root* `<Logger>` boxes the same attribute and defaults an
+  absent value to `true`; only the root is affected. This is how every undeclared `<Root>` in the
+  repository behaves, and it is not a property of these translations.
+. *Why the remedy is to state it rather than to record the divergence.* The governing plan requires
+  every row of every effective-configuration table to match, with the Log4j 2 column populated from
+  observed `-Dlog4j2.debug` output; it grants no exception for a row that is merely harmless. Leaving
+  the row divergent would leave a table row that fails its own acceptance test. Stating a Log4j 2
+  default explicitly is also already this corpus's idiom for exactly this purpose -- `blocking="true"`
+  in Decision 3 is likewise the framework default and is written out so a reviewer can see the
+  preserved Log4j 1.x semantics without consulting Core's source.
+. *The change is a statement of the Log4j 1.x value, not a new behaviour.* `true` is precisely what
+  genuine Log4j 1.x reports for the root. The attribute does not introduce a semantic the source did
+  not have; it names one the source had implicitly and Log4j 2 would otherwise have inverted.
+. *A control run proves the attribute changes no rendered byte.* Booting all three fixtures with the
+  attribute present makes the built root report `true`, matching genuine Log4j 1.x exactly. Every
+  fixture was then replayed under both variants and the captures compared: the raw bytes are identical
+  under the two variants (T8 145 bytes over two lines, T9 43 bytes, T10 43 bytes), every normalized
+  diff between the two variants is empty, and all three captures reproduce their committed baselines
+  byte for byte.
+  Booting with `-Dlog4j2.debug` emits no `WARN`, `ERROR` or `FATAL` status line under either variant.
+  The seven fixtures of the peer corpus were measured the same way with the same result, so the two
+  corpora are treated identically.
+. *Why the row was inert either way.* Additivity controls whether a logger's events are *also* passed
+  to its parent's appenders. The root has no parent -- the boot trace reports `parent=null` -- so its
+  own flag can propagate nothing. Moreover all three configurations declare *no logger other than the
+  root*, so there is no additive propagation path in the configuration at all: no child logger exists
+  whose events could be duplicated or dropped. That is why the control run's empty diff is the expected
+  result rather than a lucky one, and why stating the attribute carries no risk to the parity argument.
 
 === A note on the bridge as a reference point
 

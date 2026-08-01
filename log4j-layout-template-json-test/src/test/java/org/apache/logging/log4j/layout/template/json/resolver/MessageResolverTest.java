@@ -53,7 +53,11 @@ class MessageResolverTest {
     @LoggerContextSource("messageFallbackKeyUsingJsonTemplateLayout.xml")
     void log4j1_logger_calls_should_use_fallbackKey(final @Named(value = "List") ListAppender appender) {
 
-        // Log using legacy Log4j 1 API.
+        // Formerly an org.apache.log4j.Category.info(Object) call, now native Log4j 2. The SimpleMessage is
+        // constructed explicitly because that is exactly what the legacy path built for a String argument, so
+        // this event still carries the Message implementation the assertions below were written against; the
+        // Log4j 2 call that follows instead lets the logger's message factory choose. The (Message) cast is
+        // needed because SimpleMessage is also a CharSequence, so info(Message) and info(CharSequence) both match.
         final String log4j1Message = "Message logged using org.apache.log4j.Category.info(Object)";
         org.apache.logging.log4j.LogManager.getLogger(MessageResolverTest.class)
                 .info((Message) new SimpleMessage(log4j1Message));

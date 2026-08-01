@@ -17,6 +17,7 @@
 package org.apache.logging.log4j.perf.jmh;
 
 import java.io.File;
+import java.net.URISyntaxException;
 import java.net.URL;
 import java.util.concurrent.TimeUnit;
 import org.apache.logging.log4j.LogManager;
@@ -39,7 +40,6 @@ public class LoggingDisabledBenchmark {
     Logger log4j2Logger;
     org.slf4j.Logger slf4jLogger;
     org.apache.logging.log4j.Logger log4j1Logger;
-    private LoggerContext log4j1Context;
 
     @Setup
     public void setUp() throws Exception {
@@ -50,16 +50,29 @@ public class LoggingDisabledBenchmark {
 
         log4j2Logger = LogManager.getLogger(FileAppenderWithLocationBenchmark.class);
         slf4jLogger = LoggerFactory.getLogger(FileAppenderWithLocationBenchmark.class);
-        final URL log4j1ConfigLocation = LoggingDisabledBenchmark.class.getResource("/log4j12-perf2.xml");
-        log4j1Context = new LoggerContext("LoggingDisabledBenchmark", null, log4j1ConfigLocation.toURI());
-        log4j1Context.start();
-        log4j1Logger = log4j1Context.getLogger(FileAppenderWithLocationBenchmark.class.getName());
+        // The migrated arm is configured by the benchmark-scoped holder at the foot of this class rather than
+        // by a second global selector key, and that one context is shared by every JMH worker of the trial.
+        final LoggerContext log4j1Context = Log4j1ArmContext.acquire();
+        boolean armReady = false;
+        try {
+            // The cross-class logger name is deliberate and preserved verbatim: this benchmark has always
+            // asked for a logger named after FileAppenderWithLocationBenchmark, and renaming it would move
+            // the events onto a different logger, level and appender wiring.
+            log4j1Logger = log4j1Context.getLogger(FileAppenderWithLocationBenchmark.class.getName());
+            armReady = true;
+        } finally {
+            if (!armReady) {
+                // JMH does not tear down a state whose setup threw, so the shared context is handed back
+                // here instead of being left started for the remainder of the JVM's life.
+                Log4j1ArmContext.release();
+            }
+        }
     }
 
     @TearDown
     public void tearDown() {
         System.clearProperty("log4j.configurationFile");
-        Configurator.shutdown(log4j1Context);
+        Log4j1ArmContext.release();
         System.clearProperty("logback.configurationFile");
 
         deleteLogFiles();
@@ -128,6 +141,56 @@ public class LoggingDisabledBenchmark {
     public void log4j1IsDebugEnabled() {
         if (log4j1Logger.isDebugEnabled()) {
             log4j1Logger.debug("This won't be logged");
+        }
+    }
+
+    /**
+     * Benchmark-scoped owner of the native Log4j 2 context that replaces the process-wide Log4j 1.x
+     * repository the migrated arm used to reach through a global selector property.
+     *
+     * <p>The superseded generation kept one repository -- and therefore one appender graph -- per JVM,
+     * shared by every JMH worker thread. Because the enclosing state is thread-scoped, a context built
+     * inside {@code setUp()} would instead be built once per worker and would change the sharing and
+     * contention this benchmark measures. The context is therefore held here, created by whichever worker
+     * sets up first, shared by all the others, and reference counted so that it is stopped exactly once,
+     * when the last worker of the trial tears down. Dropping the reference on the way out means a run that
+     * replays several trials in a single JVM, such as {@code -f 0}, gets a freshly started context for each
+     * trial rather than a stopped one.</p>
+     */
+    private static final class Log4j1ArmContext {
+
+        private static LoggerContext context;
+
+        private static int users;
+
+        private Log4j1ArmContext() {}
+
+        static synchronized LoggerContext acquire() throws URISyntaxException {
+            if (context == null) {
+                final URL configLocation = LoggingDisabledBenchmark.class.getResource("/log4j12-perf2.xml");
+                final LoggerContext starting =
+                        new LoggerContext("LoggingDisabledBenchmark", null, configLocation.toURI());
+                try {
+                    starting.start();
+                } catch (final RuntimeException | Error startFailure) {
+                    // A context that was never published cannot be stopped by anyone else.
+                    Configurator.shutdown(starting);
+                    throw startFailure;
+                }
+                context = starting;
+            }
+            users++;
+            return context;
+        }
+
+        static synchronized void release() {
+            if (users == 0) {
+                return;
+            }
+            if (--users == 0) {
+                Configurator.shutdown(context);
+                context = null;
+            }
         }
     }
 }

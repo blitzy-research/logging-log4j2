@@ -24,7 +24,7 @@
     </File>
   </Appenders>
   <Loggers>
-    <Root level="debug">
+    <Root level="debug" additivity="true">
       <AppenderRef ref="File"/>
     </Root>
   </Loggers>

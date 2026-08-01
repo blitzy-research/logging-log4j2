@@ -32,7 +32,9 @@ import org.openjdk.jmh.annotations.State;
 import org.openjdk.jmh.annotations.TearDown;
 
 /**
- * Tests Log4j-1.2 Async Appender performance when including caller location information.
+ * Tests Async Appender performance when including caller location information, for the benchmark arm formerly driven by
+ * Log4j-1.2. The arm now runs on the native Log4j 2 API against the migrated
+ * {@code perf-log4j12-async-location-noOpAppender.xml} configuration.
  */
 @State(Scope.Benchmark)
 public class AsyncAppenderLog4j1LocationBenchmark {
@@ -47,6 +49,15 @@ public class AsyncAppenderLog4j1LocationBenchmark {
     @TearDown(Level.Trial)
     public void down() {
         LogManager.shutdown();
+        // The selector set by up() is withdrawn as soon as this trial's context is gone, so that the next
+        // trial in the same JVM is configured by its own setup rather than by this one's leftovers. Log4j 2
+        // normalises `log4j2.configurationFile` and the legacy `log4j.configurationFile` spelling onto a
+        // single property and prefers the canonical spelling, and the Log4j 2 peers of this benchmark set the
+        // legacy one; a value surviving here would therefore out-rank theirs and silently boot them on this
+        // benchmark's location-capturing no-op topology whenever several trials share a JVM (`-f 0`). Both
+        // spellings are cleared so the property is genuinely unset, not merely shadowed.
+        System.clearProperty("log4j2.configurationFile");
+        System.clearProperty("log4j.configurationFile");
         new File("perftest.log").delete();
     }
 

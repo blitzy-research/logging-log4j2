@@ -1,1 +1,2 @@
 <TS> DEBUG [<THREAD>] PerformanceComparison  - SEE IF THIS IS LOGGED 2.
+<TS>  WARN [<THREAD>] PerformanceComparison  - Field width control event

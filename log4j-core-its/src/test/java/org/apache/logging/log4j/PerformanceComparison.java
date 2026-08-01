@@ -22,12 +22,9 @@ import java.io.FileOutputStream;
 import java.io.FileWriter;
 import java.io.OutputStream;
 import java.io.Writer;
-import java.net.URL;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
-import org.apache.logging.log4j.core.LoggerContext;
 import org.apache.logging.log4j.core.config.ConfigurationFactory;
-import org.apache.logging.log4j.core.config.Configurator;
 import org.apache.logging.log4j.core.test.util.Profiler;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
@@ -40,11 +37,9 @@ import org.junit.jupiter.api.Test;
 @Tag("PerformanceTests")
 class PerformanceComparison {
 
-    // All three arms deliberately share the IDENTICAL logger name so that the comparison stays fair.
-    // That identity is preserved verbatim by this migration.
     private final Logger logger = LogManager.getLogger(PerformanceComparison.class.getName());
     private final org.slf4j.Logger logbacklogger = org.slf4j.LoggerFactory.getLogger(PerformanceComparison.class);
-    private final Logger log4jlogger = log4j1Context.getLogger(PerformanceComparison.class.getName());
+    private final org.apache.log4j.Logger log4jlogger = org.apache.log4j.Logger.getLogger(PerformanceComparison.class);
 
     // How many times should we try to log:
     private static final int COUNT = 500000;
@@ -56,42 +51,20 @@ class PerformanceComparison {
     private static final String LOG4J_CONFIG = "log4j12-perf.xml";
 
     private static final String LOGBACK_CONF = "logback.configurationFile";
-
-    /**
-     * Isolated logger context backing the arm formerly driven by Log4j 1.x. This arm cannot be
-     * configured through a global selector property: {@link ConfigurationFactory#CONFIGURATION_FILE_PROPERTY}
-     * is already claimed above by the Log4j 2 arm, and ConfigurationFactory returns on the first
-     * match, so a second global key would be silently ignored and both Log4j arms would share one
-     * configuration - destroying the comparison this class exists to make.
-     *
-     * <p>Assigned in {@link #setupClass()} rather than in a static initializer so that the context is
-     * built at the same point in the lifecycle at which the Log4j 1.x arm previously resolved its
-     * configuration: after the two remaining selector properties are set, and before JUnit constructs
-     * the test instance whose field initializer consumes it.</p>
-     */
-    private static LoggerContext log4j1Context;
+    private static final String LOG4J_CONF = "log4j.configuration";
 
     @BeforeAll
-    static void setupClass() throws Exception {
+    static void setupClass() {
         System.setProperty(ConfigurationFactory.CONFIGURATION_FILE_PROPERTY, CONFIG);
         System.setProperty(LOGBACK_CONF, LOGBACK_CONFIG);
-        // LOG4J_CONFIG is not published on this module's test classpath - log4j-core-test does not build
-        // a test-jar - so this lookup returns null exactly as the equivalent Log4j 1.x lookup did before
-        // the migration. A null configuration URI reproduces that pre-existing "no explicit
-        // configuration" outcome instead of newly failing the test, which behaviour preservation
-        // requires; a non-null URI keeps the context independent of both selector properties.
-        final URL configLocation = PerformanceComparison.class.getResource("/" + LOG4J_CONFIG);
-        log4j1Context = configLocation == null
-                ? new LoggerContext("PerformanceComparisonLog4j1")
-                : new LoggerContext("PerformanceComparisonLog4j1", null, configLocation.toURI());
-        log4j1Context.start();
+        System.setProperty(LOG4J_CONF, LOG4J_CONFIG);
     }
 
     @AfterAll
     static void cleanupClass() {
         System.clearProperty(ConfigurationFactory.CONFIGURATION_FILE_PROPERTY);
         System.clearProperty(LOGBACK_CONF);
-        Configurator.shutdown(log4j1Context);
+        System.clearProperty(LOG4J_CONF);
         new File("target/testlog4j.log").deleteOnExit();
         new File("target/testlog4j2.log").deleteOnExit();
         new File("target/testlogback.log").deleteOnExit();

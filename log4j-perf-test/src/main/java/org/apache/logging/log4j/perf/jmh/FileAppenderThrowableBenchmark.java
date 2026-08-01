@@ -47,7 +47,8 @@ import org.openjdk.jmh.annotations.Warmup;
 import org.slf4j.LoggerFactory;
 
 /**
- * Benchmarks Log4j 2, Log4j 1, Logback and JUL using the ERROR level which is enabled for this test.
+ * Benchmarks Log4j 2, the arm formerly driven by Log4j 1 (now also native Log4j 2, against the migrated Log4j 1
+ * configuration), Logback and JUL using the ERROR level which is enabled for this test.
  * The configuration for each writes to disk.
  */
 @State(Scope.Benchmark)
@@ -316,11 +317,24 @@ public class FileAppenderThrowableBenchmark {
             void setUp() throws Exception {
                 // Configured through an isolated LoggerContext, not a global property: the Log4j 2 arm
                 // already owns `log4j2.configurationFile`, and a non-null URI here bypasses property lookup.
+                // The context is started into a local and only published once the arm is fully initialised,
+                // because JMH does not tear down an arm whose setup threw -- a context assigned before the
+                // failure would stay started for the remainder of the JVM's life.
                 final URL configLocation =
                         FileAppenderThrowableBenchmark.class.getResource("/log4j12-perf-file-throwable.xml");
-                ctx = new LoggerContext("FileAppenderThrowableBenchmarkLog4j1", null, configLocation.toURI());
-                ctx.start();
-                logger = ctx.getLogger(FileAppenderThrowableBenchmark.class.getName());
+                final LoggerContext starting =
+                        new LoggerContext("FileAppenderThrowableBenchmarkLog4j1", null, configLocation.toURI());
+                boolean armReady = false;
+                try {
+                    starting.start();
+                    logger = starting.getLogger(FileAppenderThrowableBenchmark.class.getName());
+                    armReady = true;
+                } finally {
+                    if (!armReady) {
+                        Configurator.shutdown(starting);
+                    }
+                }
+                ctx = starting;
             }
 
             @Override

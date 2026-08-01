@@ -27,7 +27,7 @@
     </Async>
   </Appenders>
   <Loggers>
-    <Root level="debug">
+    <Root level="debug" additivity="true">
       <AppenderRef ref="ASYNC"/>
     </Root>
   </Loggers>
