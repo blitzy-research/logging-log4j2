@@ -38,14 +38,9 @@ import org.slf4j.LoggerFactory;
 public class DebugDisabledBenchmark {
     Logger log4jLogger;
     org.slf4j.Logger slf4jLogger;
-    Logger log4jClassicLogger;
+    org.apache.logging.log4j.Logger log4jClassicLogger;
+    private LoggerContext log4j1Context;
     Integer j;
-
-    /**
-     * Isolated logger context backing the formerly-Log4j-1.x arm. Held as a field so that
-     * {@link #tearDown()} can shut it down deterministically.
-     */
-    LoggerContext log4jClassicContext;
 
     @Setup
     public void setUp() throws Exception {
@@ -54,27 +49,26 @@ public class DebugDisabledBenchmark {
 
         log4jLogger = LogManager.getLogger(DebugDisabledBenchmark.class);
         slf4jLogger = LoggerFactory.getLogger(DebugDisabledBenchmark.class);
-        // The arm formerly driven by Log4j 1.x is now a native Log4j 2 arm. It must NOT be configured
-        // through a global selector property: `log4j.configurationFile` above already claims that
-        // property for the Log4j 2 arm, and ConfigurationFactory returns on the first match, so a
-        // second global key would be silently ignored and this arm would inherit the wrong
-        // configuration. An isolated LoggerContext keeps the two arms independent within one JVM.
-        final URL log4jClassicConfig =
-                DebugDisabledBenchmark.class.getClassLoader().getResource("log4j12-perf2.xml");
-        log4jClassicContext = new LoggerContext("DebugDisabledBenchmarkLog4j1", null, log4jClassicConfig.toURI());
-        log4jClassicContext.start();
-        // Logger name is preserved byte-identically: the Log4j 1.x bridge derived it from
-        // clazz.getName(), which is exactly what is passed here.
-        log4jClassicLogger = log4jClassicContext.getLogger(DebugDisabledBenchmark.class.getName());
+        // The arm formerly driven by Log4j 1.x is now native Log4j 2, and it is deliberately NOT bootstrapped
+        // through a global selector property. `log4j.configurationFile` above already belongs to the Log4j 2
+        // arm, and ConfigurationFactory returns on the first key it resolves, so a second global key would
+        // silently mis-configure one of the two arms. Handing a non-null configuration URI to the
+        // LoggerContext constructor skips property lookup altogether, keeping both arms independent inside a
+        // single JVM and leaving the Log4j 2 and Logback arms exactly as they were.
+        final URL log4j1ConfigLocation = DebugDisabledBenchmark.class.getResource("/log4j12-perf2.xml");
+        log4j1Context = new LoggerContext("DebugDisabledBenchmark", null, log4j1ConfigLocation.toURI());
+        log4j1Context.start();
+        // The logger name is preserved byte-for-byte: Log4j 1.x derived it from clazz.getName(), which is
+        // exactly the argument used here, so all three arms keep sharing a single logger name.
+        log4jClassicLogger = log4j1Context.getLogger(DebugDisabledBenchmark.class.getName());
         j = Integer.valueOf(2);
     }
 
     @TearDown
     public void tearDown() {
         System.clearProperty("log4j.configurationFile");
+        Configurator.shutdown(log4j1Context);
         System.clearProperty("logback.configurationFile");
-
-        Configurator.shutdown(log4jClassicContext);
     }
 
     @Benchmark

@@ -1,13 +1,1 @@
-<TS> DEBUG RunLog4j1 [<THREAD>]  This is a debug message 
 <TS> INFO RunLog4j1 [<THREAD>]  Short msg 
-<TS> WARN RunLog4j1 [<THREAD>]  This is a warn message 
-<TS> ERROR RunLog4j1 [<THREAD>]  This is an error message 
-<TS> FATAL RunLog4j1 [<THREAD>]  This is a fatal message 
-<TS> DEBUG AsyncAppenderProbe [<THREAD>]  second logger name exercising the c1 abbreviation 
-<TS> DEBUG RunLog4j1 [<THREAD>] async-parity event emitted while the aKey key is populated 
-<TS> DEBUG RunLog4j1 [<THREAD>]  event emitted after the aKey key was removed 
-<TS> DEBUG child [<THREAD>]  event from a child logger, proving additive propagation to root 
-<TS> DEBUG RunLog4j1 [<THREAD>]  event carrying a throwable 
-java.lang.IllegalStateException: deterministic parity failure
-	at org.apache.logging.log4j.core.async.perftest.AsyncParityFixture.emit(AsyncParityFixture.java:42)
-	at org.apache.logging.log4j.core.async.perftest.AsyncParityFixture.main(AsyncParityFixture.java:17)

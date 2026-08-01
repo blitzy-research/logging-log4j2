@@ -1,0 +1,4 @@
+Caught an exception
+java.lang.IllegalStateException: Test Throwable
+	at org.apache.logging.log4j.perf.parity.ThrowableParityFixture.emit(ThrowableParityFixture.java:42)
+	at org.apache.logging.log4j.perf.parity.ThrowableParityFixture.main(ThrowableParityFixture.java:17)
