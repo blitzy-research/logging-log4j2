@@ -16,18 +16,31 @@
  */
 package org.apache.logging.log4j;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
 import java.io.BufferedOutputStream;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.FileWriter;
 import java.io.OutputStream;
 import java.io.Writer;
+import java.net.URISyntaxException;
 import java.net.URL;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
 import org.apache.logging.log4j.core.LoggerContext;
+import org.apache.logging.log4j.core.config.Configuration;
 import org.apache.logging.log4j.core.config.ConfigurationFactory;
+import org.apache.logging.log4j.core.config.ConfigurationSource;
 import org.apache.logging.log4j.core.config.Configurator;
+import org.apache.logging.log4j.core.config.builder.api.ConfigurationBuilder;
+import org.apache.logging.log4j.core.config.builder.api.ConfigurationBuilderFactory;
+import org.apache.logging.log4j.core.config.builder.impl.BuiltConfiguration;
 import org.apache.logging.log4j.core.test.util.Profiler;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
@@ -36,6 +49,20 @@ import org.junit.jupiter.api.Test;
 
 /**
  * Use this class to analyze performance between Log4j and other logging frameworks.
+ * <p>
+ * This class is not selected by a normal build. The module's inherited Failsafe {@code groups} filter names JUnit 4
+ * category types, which JUnit 5 reads as literal tag names and matches against nothing, and the module's Surefire
+ * execution is skipped outright. The {@code performance-comparison} profile in this module's POM exists to run it, and
+ * fails rather than passes if it selects no test:
+ * </p>
+ *
+ * <pre>{@code mvn -pl log4j-core-its -Pperformance-comparison verify}</pre>
+ * <p>
+ * The three arms are configured independently. The two arms selected by global properties -
+ * {@value #CONFIG} for Log4j 2 and {@value #LOGBACK_CONFIG} for Logback - are left exactly as they were. The arm
+ * migrated from Log4j 1.x is configured through a logger context of its own, because it and the native arm are now the
+ * same implementation and one global property could only ever select one of the two.
+ * </p>
  */
 @Tag("PerformanceTests")
 class PerformanceComparison {
@@ -43,11 +70,14 @@ class PerformanceComparison {
     /**
      * Serves the configuration that was migrated from Log4j 1.x. It is held in a logger context of its own rather than
      * in the global one, because this class drives three logging generations inside a single JVM: two of them are now
-     * the same implementation, so a single global configuration property could only ever select one of the two. A
-     * context that is handed its configuration location directly consults no property at all, so neither arm can
-     * displace the other. Assigned by {@link #setupClass()}, which JUnit runs before it instantiates this class, so
-     * the instance initializer below always observes a started context, and stopped again by {@link #cleanupClass()}
-     * so that no started context outlives the test.
+     * the same implementation, so a single global configuration property could only ever select one of the two.
+     * {@link #setupClass()} therefore configures this context on both of its paths without letting Log4j 2 resolve a
+     * configuration itself: it is always started from a configuration it is <em>handed</em> directly - the migrated
+     * fixture's own location when that fixture is on the classpath, and the explicitly built hierarchy returned by
+     * {@link #supersededDefaultHierarchy()} when it is not. Neither path consults a configuration property, so neither
+     * arm can displace the other. Assigned by {@link #setupClass()}, which JUnit runs before it instantiates this class, so the instance
+     * initializer below always observes a started context, and stopped again by {@link #cleanupClass()} so that no
+     * started context outlives the test.
      */
     private static LoggerContext migratedContext;
 
@@ -70,21 +100,110 @@ class PerformanceComparison {
 
     private static final String MIGRATED_CONTEXT_NAME = "performance-comparison-migrated";
 
+    /**
+     * Name carried by the configuration built when {@link #LOG4J_CONFIG} is not on this module's test classpath. It
+     * appears in status output and in assertion failures, so it names the semantics it reproduces rather than the
+     * mechanism that builds it.
+     */
+    private static final String SUPERSEDED_HIERARCHY_NAME = "superseded-default-hierarchy";
+
+    /**
+     * Where {@link #LOG4J_CONFIG} resolved to, or {@code null} when it is not on this module's test classpath. Recorded
+     * once by {@link #setupClass()} so that every assertion below can state which of the two configurations the
+     * migrated arm is actually running without resolving the resource a second time and risking a different answer.
+     */
+    private static URL migratedConfigLocation;
+
     @BeforeAll
-    static void setupClass() throws Exception {
+    static void setupClass() throws URISyntaxException {
         System.setProperty(ConfigurationFactory.CONFIGURATION_FILE_PROPERTY, CONFIG);
         System.setProperty(LOGBACK_CONF, LOGBACK_CONFIG);
+        assertEquals(
+                CONFIG,
+                System.getProperty(ConfigurationFactory.CONFIGURATION_FILE_PROPERTY),
+                "the native arm's configuration property must be in force before any logger is acquired");
+        assertEquals(
+                LOGBACK_CONFIG,
+                System.getProperty(LOGBACK_CONF),
+                "the Logback arm's configuration property must be in force before any logger is acquired");
         // The migrated configuration is selected by pointing a dedicated context straight at it, rather than by
         // setting a global property, so that it cannot displace the native configuration selected just above.
-        // That fixture ships in another module's test resources and is therefore not always on this module's test
-        // classpath. When it is absent the location stays null and is passed through unchanged, which reproduces
-        // what was observed before the migration: the Log4j 1.x arm found no configuration either, so it rendered
-        // nothing to any destination. Passing the null location on preserves that outcome instead of failing.
-        final URL migratedConfigLocation = PerformanceComparison.class.getResource("/" + LOG4J_CONFIG);
-        migratedContext = migratedConfigLocation == null
-                ? new LoggerContext(MIGRATED_CONTEXT_NAME)
-                : new LoggerContext(MIGRATED_CONTEXT_NAME, null, migratedConfigLocation.toURI());
-        migratedContext.start();
+        // That fixture belongs to another module, whose test resources are not published, so it is absent from this
+        // module's test classpath: the lookup below returns null here today and the built-hierarchy branch is the path
+        // actually taken. When it is absent, handing the null location to the context would not leave the arm
+        // unconfigured: the context would resolve a location from the very configuration property the native arm sets
+        // two lines above, report a failed reconfiguration when that value does not resolve, and otherwise fall back
+        // to Log4j 2's own default configuration, whose root logger is ERROR and which owns a console appender.
+        // None of that is what was observed before the migration, where the superseded arm found no configuration,
+        // kept its default root level of DEBUG, and owned no appender at all. The absent-fixture branch therefore
+        // builds that hierarchy explicitly - root at DEBUG, zero appenders - so the arm keeps admitting the events it
+        // is timing while still rendering them nowhere. Building the configuration also keeps the arm
+        // property-independent in both branches: a context that is handed a configuration, like one handed a
+        // location, reads no configuration property, and an unresolvable fixture surfaces as a configured context
+        // rather than as an exception thrown out of class setup.
+        migratedConfigLocation = PerformanceComparison.class.getResource("/" + LOG4J_CONFIG);
+        final LoggerContext starting;
+        if (migratedConfigLocation == null) {
+            starting = new LoggerContext(MIGRATED_CONTEXT_NAME);
+            starting.start(supersededDefaultHierarchy());
+        } else {
+            starting = new LoggerContext(MIGRATED_CONTEXT_NAME, null, migratedConfigLocation.toURI());
+            starting.start();
+        }
+        // Published only once the context is started, so the instance initializer cannot observe a partial one.
+        migratedContext = starting;
+        assertMigratedArmIsConfigured();
+    }
+
+    /**
+     * Builds the hierarchy that the superseded Log4j 1.x arm presented when its configuration file could not be found:
+     * a root logger at DEBUG owning no appender. Log4j 1.x reached that state by leaving its own repository defaults in
+     * place; Log4j 2's defaults differ on both counts, so the state has to be stated rather than inherited.
+     *
+     * @return a configuration, ready to be started, with a root logger at DEBUG and no appenders
+     */
+    private static Configuration supersededDefaultHierarchy() {
+        final ConfigurationBuilder<BuiltConfiguration> builder = ConfigurationBuilderFactory.newConfigurationBuilder();
+        builder.setConfigurationName(SUPERSEDED_HIERARCHY_NAME);
+        builder.add(builder.newRootLogger(Level.DEBUG));
+        return builder.build(false);
+    }
+
+    /**
+     * Asserts that the migrated arm came up on the configuration {@link #setupClass()} selected for it, and that the
+     * arm therefore measures what it claims to. The assertions are deliberately branch-aware: the presence of
+     * {@link #LOG4J_CONFIG} on the classpath is a property of the module's test scope, not of this class, so it is
+     * never asserted. What is asserted in both branches is that the configuration in force is the one this class
+     * chose, and that its root logger admits DEBUG - the level the timed calls below use.
+     */
+    private static void assertMigratedArmIsConfigured() {
+        assertTrue(migratedContext.isStarted(), "the migrated arm's context must be started before it is measured");
+        final Configuration configuration = migratedContext.getConfiguration();
+        assertNotNull(configuration, "the migrated arm's context must hold a configuration");
+        final ConfigurationSource source = configuration.getConfigurationSource();
+        if (migratedConfigLocation == null) {
+            assertSame(
+                    ConfigurationSource.NULL_SOURCE,
+                    source,
+                    "with the fixture absent the arm must run the hierarchy built for it, which has no source");
+            assertEquals(
+                    SUPERSEDED_HIERARCHY_NAME,
+                    configuration.getName(),
+                    "with the fixture absent the arm must run the hierarchy built for it, not a default one");
+            assertTrue(
+                    configuration.getRootLogger().getAppenders().isEmpty(),
+                    "the superseded arm rendered to no destination when its configuration was absent, so neither may"
+                            + " its replacement");
+        } else {
+            assertNotNull(source.getLocation(), "a fixture-backed configuration must report where it was read from");
+            assertTrue(
+                    source.getLocation().endsWith(LOG4J_CONFIG),
+                    "the arm must be built from " + LOG4J_CONFIG + " but was built from " + source.getLocation());
+        }
+        assertEquals(
+                Level.DEBUG,
+                configuration.getRootLogger().getLevel(),
+                "the migrated arm's root logger must admit DEBUG, the level every timed call below uses");
     }
 
     @AfterAll
@@ -92,15 +211,40 @@ class PerformanceComparison {
         System.clearProperty(ConfigurationFactory.CONFIGURATION_FILE_PROPERTY);
         System.clearProperty(LOGBACK_CONF);
         // Stopping the context here is what keeps it from outliving the test: Surefire reuses no fork, but it does
-        // randomise order, so nothing may be left started behind. The call tolerates a null argument.
-        Configurator.shutdown(migratedContext);
+        // randomise order, so nothing may be left started behind. The field is cleared afterwards so that a context
+        // stopped once is never handed to the shutdown call a second time; the stopped context is held in a local so
+        // that the assertion below can still be made against it once the field no longer refers to it.
+        final LoggerContext stopped = migratedContext;
+        if (stopped != null) {
+            Configurator.shutdown(stopped);
+            migratedContext = null;
+        }
         new File("target/testlog4j.log").deleteOnExit();
         new File("target/testlog4j2.log").deleteOnExit();
         new File("target/testlogback.log").deleteOnExit();
+        // Asserted after the teardown actions rather than between them, so that a failing assertion reports an
+        // incomplete cleanup instead of causing one.
+        assertNull(
+                System.getProperty(ConfigurationFactory.CONFIGURATION_FILE_PROPERTY),
+                "the native arm's configuration property must not outlive the test");
+        assertNull(
+                System.getProperty(LOGBACK_CONF), "the Logback arm's configuration property must not outlive the test");
+        assertNotNull(stopped, "the migrated arm's context must have been created by setup");
+        assertFalse(stopped.isStarted(), "the migrated arm's context must not outlive the test");
     }
 
     @Test
     void testPerformance() {
+
+        // A timing loop over a disabled logger measures the level check and nothing else, which would silently turn
+        // this comparison into a comparison of level checks. Assert the migrated arm admits its events before any
+        // measurement is taken. Only the migrated arm is asserted: the other two arms are selected by global
+        // properties naming fixtures that this module does not own, so whether they are enabled is a property of the
+        // test scope rather than of this class.
+        assertTrue(
+                log4jlogger.isDebugEnabled(),
+                "the migrated arm must admit the debug events it is about to time, or the measurement below is of a"
+                        + " disabled call rather than of logging");
 
         log4j(WARMUP);
         logback(WARMUP);

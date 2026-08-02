@@ -51,7 +51,11 @@
          Plugin version properties (in alphabetical order)
          ================================================= -->
     <asciidoctor-maven-plugin.version>2.2.4</asciidoctor-maven-plugin.version>
-    <docker-maven-plugin.version>0.46.0</docker-maven-plugin.version>
+    <!-- `docker-maven-plugin` 0.46.0 and 0.47.0 fail against Docker Engine API >= 1.45, which removed the
+         legacy top-level `NetworkSettings` fields (`IPAddress`, `Gateway`, `MacAddress`, ...) from the
+         container-inspect response; the plugin dereferences them unconditionally and throws
+         `Cannot invoke "com.google.gson.JsonElement.isJsonNull()"`. 0.48.1 handles the current schema. -->
+    <docker-maven-plugin.version>0.48.1</docker-maven-plugin.version>
     <exam-maven-plugin.version>4.14.0</exam-maven-plugin.version>
     <maven-taglib-plugin.version>2.4</maven-taglib-plugin.version>
     <!-- `surefire.version` property used in `apache.org:apache`: -->

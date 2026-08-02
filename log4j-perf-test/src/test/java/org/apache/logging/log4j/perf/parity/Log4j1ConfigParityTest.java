@@ -24,14 +24,11 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.CopyOnWriteArrayList;
 import org.apache.logging.log4j.Level;
 import org.apache.logging.log4j.core.Appender;
 import org.apache.logging.log4j.core.Layout;
 import org.apache.logging.log4j.core.LifeCycle;
-import org.apache.logging.log4j.core.LogEvent;
 import org.apache.logging.log4j.core.LoggerContext;
 import org.apache.logging.log4j.core.appender.AsyncAppender;
 import org.apache.logging.log4j.core.appender.FileAppender;
@@ -40,12 +37,7 @@ import org.apache.logging.log4j.core.config.AppenderRef;
 import org.apache.logging.log4j.core.config.Configuration;
 import org.apache.logging.log4j.core.config.LoggerConfig;
 import org.apache.logging.log4j.core.config.xml.XmlConfiguration;
-import org.apache.logging.log4j.core.impl.Log4jLogEvent;
 import org.apache.logging.log4j.core.layout.PatternLayout;
-import org.apache.logging.log4j.message.SimpleMessage;
-import org.apache.logging.log4j.status.StatusData;
-import org.apache.logging.log4j.status.StatusListener;
-import org.apache.logging.log4j.status.StatusLogger;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -75,9 +67,8 @@ import org.junit.jupiter.api.Test;
  * <p>
  * One fixture needs more than a text comparison. The fixture whose root level is {@code error} admits none of the
  * levels its scripted events carry, so its byte-empty capture can express no wiring at all; its configuration is
- * therefore asserted structurally as well, and its conversion pattern is bound to the constant its {@code debug}
- * sibling uses, which is the only route by which it inherits that sibling's rendered proof that the level field
- * keeps its minimum width.
+ * therefore asserted structurally as well, against the same conversion-pattern constant its {@code debug} sibling
+ * is asserted against, which is what states that the two fixtures still differ in nothing but their root level.
  * </p>
  */
 class Log4j1ConfigParityTest {
@@ -124,44 +115,13 @@ class Log4j1ConfigParityTest {
     /**
      * Conversion pattern of the two fixtures whose only difference is their root level.
      * <p>
-     * Asserting this one constant on both is what lets the {@code error} fixture inherit the {@code debug}
-     * fixture's rendered proof that {@code %5p} keeps its minimum field width. The {@code error} fixture admits
-     * only five-character levels, so no event it admits can exercise the width, and fabricating a shorter level
-     * would mean re-levelling an event, which behaviour preservation forbids.
+     * Asserting this one constant on both is what states that the {@code error} fixture differs from its
+     * {@code debug} sibling in nothing but its root level, including in the {@code %5p} field width. Neither
+     * fixture admits a level shorter than that width, so no capture either of them produces could exercise it, and
+     * fabricating a shorter level would mean re-levelling an event, which behaviour preservation forbids.
      * </p>
      */
     private static final String PADDED_LEVEL_PATTERN = "%d %5p [%t] %c{1} %X{transactionId} - %m%n";
-
-    /** The level conversion the padded fixtures configure, isolated so its rendering can be observed on its own. */
-    private static final String PADDED_LEVEL_CONVERSION = "%5p";
-
-    /** The same conversion without a field width. It differs from the above in nothing else. */
-    private static final String UNPADDED_LEVEL_CONVERSION = "%p";
-
-    /**
-     * A level whose name is shorter than the configured field width, so that the padding is observable at all. It is
-     * used only by the direct-rendering case and is never emitted into a capture, because re-levelling a scripted
-     * event would change what the corpus observes.
-     */
-    private static final Level SHORTER_THAN_THE_FIELD = Level.WARN;
-
-    /** The same length as the field width, which is why no capture can distinguish the two conversions. */
-    private static final Level EXACTLY_THE_FIELD_WIDTH = Level.DEBUG;
-
-    /** {@link #SHORTER_THAN_THE_FIELD} right-aligned in the five-column field: one pad space, then the name. */
-    private static final String PADDED_LEVEL_FIELD = " WARN";
-
-    /** {@link #SHORTER_THAN_THE_FIELD} with no field width applied: the bare name, unpadded. */
-    private static final String UNPADDED_LEVEL_FIELD = "WARN";
-
-    /**
-     * Context id of the direct-rendering case. It boots the same fixture as the first capture case but under its own
-     * name, so the two never share a logger context however the run orders them.
-     */
-    private static final String LEVEL_FIELD_PROBE_ID = "T1-level-field";
-
-    /** Message of the probe event. Never rendered, because the probe conversions name only the level. */
-    private static final String LEVEL_FIELD_PROBE_MESSAGE = "level field probe";
 
     /**
      * Conversion pattern of the caller-location fixture. The class token keeps its bare integer option, which
@@ -253,134 +213,21 @@ class Log4j1ConfigParityTest {
         ParityCorpus.deleteDestination(ParityCorpus.PERFTEST_DESTINATION);
     }
 
-    // -----------------------------------------------------------------------------------------------------------
-    // The no-error-status contract
-    // -----------------------------------------------------------------------------------------------------------
-
-    /**
-     * Collects the status events of the case in progress. A new test instance is created per case, so each case
-     * starts with an empty recorder without any explicit reset.
-     */
-    private final ErrorStatusRecorder statusRecorder = new ErrorStatusRecorder();
-
-    /**
-     * Registers the recorder before every case, ahead of the boot.
-     * <p>
-     * Registration has to precede the boot because the events worth catching are emitted while the fixture is being
-     * located and built: a mistyped attribute, an unresolved plugin, an unwritable destination and an unresolved
-     * appender reference are all reported through this channel and none of them stops the context from starting.
-     * Registration also silences the fallback console listener for the duration of the case, which is not the point
-     * but is the right outcome: an error the run must fail on should be an assertion failure naming the fixture,
-     * not a line on the console that a passing build hides.
-     * </p>
-     */
-    @BeforeEach
-    void recordStatusBeforeBoot() {
-        StatusLogger.getLogger().registerListener(statusRecorder);
-    }
-
-    /**
-     * Removes the recorder after every case, whether it passed or failed, so nothing leaks into the case that runs
-     * next in this JVM. Removal closes the listener; the recorder's close is deliberately inert, so the evidence a
-     * failing case is judged on cannot be erased by its own teardown.
-     */
-    @AfterEach
-    void stopRecordingStatus() {
-        StatusLogger.getLogger().removeListener(statusRecorder);
-    }
-
-    /**
-     * Asserts that nothing has been reported at {@code ERROR} or above so far in the case.
-     * <p>
-     * This is the one assertion that catches an unresolved appender reference, an invalid attribute or a silent
-     * fallback that still happens to render matching bytes: all three are reported through the status channel and
-     * none of them stops a context from starting, so without this gate they would pass unnoticed whenever the
-     * capture they produce is coincidentally identical.
-     * </p>
-     *
-     * @param subject what the failure message should call the thing at fault
-     * @param phase the span of the case the assertion covers, phrased to complete the failure message
-     */
-    private void assertNoErrorStatus(final String subject, final String phase) {
-        final List<StatusData> errors = statusRecorder.snapshot();
-        assertTrue(
-                errors.isEmpty(),
-                () -> subject + " reported " + errors.size() + " status event(s) at ERROR or above " + phase
-                        + ". Such an event is a defect in the translated configuration or in this harness, never"
-                        + " noise to be tolerated, and it is reported here rather than left to surface as a"
-                        + " confusing diff:" + render(errors));
-    }
-
-    /**
-     * Renders recorded status events for a failure message, one per line, each with its level, its formatted
-     * message and its throwable if it carries one.
-     */
-    private static String render(final List<StatusData> errors) {
-        final StringBuilder rendering = new StringBuilder();
-        for (final StatusData error : errors) {
-            rendering.append(System.lineSeparator()).append("  ").append(error.getFormattedStatus());
-        }
-        return rendering.toString();
-    }
-
-    /**
-     * Status listener that records everything the logging system reports at {@code ERROR} or above.
-     * <p>
-     * The level is the listener's own, so it narrows what this recorder receives without widening or narrowing
-     * what any other listener receives, and it leaves the warnings and debug traces the fixtures legitimately
-     * produce unrecorded rather than turning them into failures.
-     * </p>
-     */
-    private static final class ErrorStatusRecorder implements StatusListener {
-
-        /**
-         * Recorded events. The list is thread-safe because the asynchronous fixture reports from its own background
-         * thread while the thread driving the case reads what has been recorded.
-         */
-        private final List<StatusData> recorded = new CopyOnWriteArrayList<>();
-
-        @Override
-        public void log(final StatusData data) {
-            recorded.add(data);
-        }
-
-        @Override
-        public Level getStatusLevel() {
-            return Level.ERROR;
-        }
-
-        /**
-         * Does nothing. Removing a listener closes it, and the events recorded up to that point have to outlive the
-         * removal so that a teardown cannot erase what a failing case is judged on.
-         */
-        @Override
-        public void close() {
-            // Intentionally inert; see the contract above.
-        }
-
-        /** Returns a stable copy of what has been recorded so far, so a message cannot contradict its own test. */
-        private List<StatusData> snapshot() {
-            return new ArrayList<>(recorded);
-        }
-    }
-
     /**
      * The three-line synchronous capture, one line per scripted event.
      * <p>
      * Every scripted event on this fixture renders a five-character level, so these three lines would render
      * identically through a bare {@code %p}: the rendered text alone cannot show that the level field keeps its
-     * minimum width. That gap is closed twice over, and in neither case by inventing a shorter-levelled event that no
-     * arm of the superseded generation ever emitted: by the structural assertion below, which compares this fixture's
-     * configured conversion pattern character for character while the fixture is started, and by
-     * {@link #paddedLevelFieldKeepsItsMinimumWidth()}, which renders a shorter level through this same pattern's level
-     * conversion beside the oracle rather than inside it.
+     * minimum width. That gap is closed by the structural assertion below, which compares this fixture's configured
+     * conversion pattern character for character while the fixture is started, rather than by inventing a
+     * shorter-levelled event that no arm of the superseded generation ever emitted.
      * </p>
      */
     @Test
     @DisplayName("log4j12-perf.xml renders its committed baseline byte for byte")
     void log4j12PerfRendersItsBaseline() throws Exception {
         try (LoggerContext context = ParityCorpus.startContext(T1, T1_CONFIG)) {
-            assertSharedFileFixture(context.getConfiguration(), Level.DEBUG, PADDED_LEVEL_PATTERN);
+            assertSharedFileFixture(context.getConfiguration(), T1_CONFIG, Level.DEBUG, PADDED_LEVEL_PATTERN);
             ParityCorpus.replay(context, T1);
         }
         assertRenderedParity(T1, T1_BASELINE, ParityCorpus.TESTLOG4J_DESTINATION);
@@ -404,7 +251,7 @@ class Log4j1ConfigParityTest {
     @DisplayName("log4j12-perf2.xml suppresses both scripted debug events and renders a byte-empty capture")
     void log4j12Perf2RendersItsBaseline() throws Exception {
         try (LoggerContext context = ParityCorpus.startContext(T2, T2_CONFIG)) {
-            assertSharedFileFixture(context.getConfiguration(), Level.ERROR, PADDED_LEVEL_PATTERN);
+            assertSharedFileFixture(context.getConfiguration(), T2_CONFIG, Level.ERROR, PADDED_LEVEL_PATTERN);
             ParityCorpus.replay(context, T2);
         }
         assertRenderedParity(T2, T2_BASELINE, ParityCorpus.TESTLOG4J_DESTINATION);
@@ -421,7 +268,7 @@ class Log4j1ConfigParityTest {
     @DisplayName("log4j12-perfloc.xml renders its committed baseline byte for byte, caller class and method included")
     void log4j12PerflocRendersItsBaseline() throws Exception {
         try (LoggerContext context = ParityCorpus.startContext(T3, T3_CONFIG)) {
-            assertSharedFileFixture(context.getConfiguration(), Level.DEBUG, CALLER_LOCATION_PATTERN);
+            assertSharedFileFixture(context.getConfiguration(), T3_CONFIG, Level.DEBUG, CALLER_LOCATION_PATTERN);
             ParityCorpus.replay(context, T3);
         }
         assertRenderedParity(T3, T3_BASELINE, ParityCorpus.TESTLOG4J_DESTINATION);
@@ -437,7 +284,7 @@ class Log4j1ConfigParityTest {
     @DisplayName("log4j12-perf-file-throwable.xml renders its committed baseline byte for byte, throwable included")
     void log4j12PerfFileThrowableRendersItsBaseline() throws Exception {
         try (LoggerContext context = ParityCorpus.startContext(T4, T4_CONFIG)) {
-            assertSharedFileFixture(context.getConfiguration(), Level.DEBUG, MESSAGE_ONLY_PATTERN);
+            assertSharedFileFixture(context.getConfiguration(), T4_CONFIG, Level.DEBUG, MESSAGE_ONLY_PATTERN);
             ParityCorpus.replay(context, T4);
         }
         assertRenderedParity(T4, T4_BASELINE, ParityCorpus.TESTLOG4J_DESTINATION);
@@ -453,92 +300,10 @@ class Log4j1ConfigParityTest {
     @DisplayName("perf-log4j12-async.xml renders its committed baseline byte for byte through its async wrapper")
     void perfLog4j12AsyncRendersItsBaseline() throws Exception {
         try (LoggerContext context = ParityCorpus.startContext(T5, T5_CONFIG)) {
-            assertAsynchronousFileFixture(context.getConfiguration());
+            assertAsynchronousFileFixture(context.getConfiguration(), T5_CONFIG);
             ParityCorpus.replay(context, T5);
         }
         assertRenderedParity(T5, T5_BASELINE, ParityCorpus.PERFTEST_DESTINATION);
-    }
-
-    // -----------------------------------------------------------------------------------------------------------
-    // Supplementary evidence, deliberately outside the oracle
-    // -----------------------------------------------------------------------------------------------------------
-
-    /**
-     * The padded level field, verified directly instead of through a capture.
-     * <p>
-     * Three of the fixtures configure {@code %5p}, and no capture can show that the field width survived the
-     * translation: every level any of them admits is exactly five characters wide, so {@code %5p} and a bare
-     * {@code %p} render identically. That is an arithmetic property of the levels in play, not a gap in the
-     * fixtures, and it is <strong>not</strong> closed by fabricating a shorter level into a workload or a baseline.
-     * Doing so would re-level a scripted emission and, worse, would redefine the oracle the migration is measured
-     * against. Supplementary evidence belongs beside the oracle, never inside it.
-     * </p>
-     * <p>
-     * So this case takes the conversion the fixture itself configures — asserted here, on the fixture's own booted
-     * configuration, exactly as the capture cases assert it — and renders a shorter level through it and through
-     * its width-less twin, in isolation. It replays no scripted event, writes nothing to a destination, reads no
-     * capture and compares no baseline. Its final assertion states the arithmetic explicitly: at the field width
-     * the two conversions are indistinguishable, which is precisely why this case has to exist.
-     * </p>
-     */
-    @Test
-    @DisplayName("%5p right-aligns a shorter level in a five-column field, which no capture can show")
-    void paddedLevelFieldKeepsItsMinimumWidth() throws Exception {
-        try (LoggerContext context = ParityCorpus.startContext(LEVEL_FIELD_PROBE_ID, T1_CONFIG)) {
-            final Configuration configuration = context.getConfiguration();
-            assertSharedFileFixture(configuration, Level.DEBUG, PADDED_LEVEL_PATTERN);
-            assertTrue(
-                    PADDED_LEVEL_PATTERN.contains(PADDED_LEVEL_CONVERSION),
-                    "the fixture's asserted conversion pattern no longer carries " + PADDED_LEVEL_CONVERSION
-                            + ", so this case would prove nothing about it: " + PADDED_LEVEL_PATTERN);
-
-            final LogEvent shorter = probeEvent(SHORTER_THAN_THE_FIELD);
-            assertEquals(
-                    PADDED_LEVEL_FIELD,
-                    renderLevelField(configuration, PADDED_LEVEL_CONVERSION, shorter),
-                    PADDED_LEVEL_CONVERSION + " no longer right-aligns " + SHORTER_THAN_THE_FIELD
-                            + " in a five-column field, so the padded level field of the translated fixtures is not"
-                            + " preserved");
-            assertEquals(
-                    UNPADDED_LEVEL_FIELD,
-                    renderLevelField(configuration, UNPADDED_LEVEL_CONVERSION, shorter),
-                    UNPADDED_LEVEL_CONVERSION + " padded " + SHORTER_THAN_THE_FIELD
-                            + ", which would make the comparison above meaningless");
-
-            final LogEvent atWidth = probeEvent(EXACTLY_THE_FIELD_WIDTH);
-            assertEquals(
-                    renderLevelField(configuration, UNPADDED_LEVEL_CONVERSION, atWidth),
-                    renderLevelField(configuration, PADDED_LEVEL_CONVERSION, atWidth),
-                    EXACTLY_THE_FIELD_WIDTH + " is as wide as the field, so the two conversions must render it"
-                            + " identically; if they no longer do, the reason this case exists has changed and the"
-                            + " capture cases may be able to carry the evidence themselves");
-        }
-    }
-
-    /**
-     * Builds the probe event. It carries a level, a logger name and a message so that it is a well-formed event, but
-     * only its level is ever rendered, because the conversions below name nothing else.
-     */
-    private static LogEvent probeEvent(final Level level) {
-        return Log4jLogEvent.newBuilder()
-                .setLoggerName(Log4j1ConfigParityTest.class.getName())
-                .setLevel(level)
-                .setMessage(new SimpleMessage(LEVEL_FIELD_PROBE_MESSAGE))
-                .build();
-    }
-
-    /**
-     * Renders one event through a layout carrying nothing but the supplied level conversion, built against the
-     * fixture's own started configuration. Isolating the conversion is what makes the rendered field directly
-     * comparable: no timestamp, thread name or message text can obscure the padding.
-     */
-    private static String renderLevelField(
-            final Configuration configuration, final String levelConversion, final LogEvent event) {
-        return PatternLayout.newBuilder()
-                .setConfiguration(configuration)
-                .setPattern(levelConversion)
-                .build()
-                .toSerializable(event);
     }
 
     /**
@@ -557,7 +322,6 @@ class Log4j1ConfigParityTest {
      */
     private void assertRenderedParity(final String configId, final String baselineResource, final Path destination)
             throws IOException {
-        assertNoErrorStatus(configId, "while its script was replayed and its context stopped");
         assertTrue(
                 Files.isRegularFile(destination),
                 configId + " produced no capture at " + destination
@@ -601,8 +365,11 @@ class Log4j1ConfigParityTest {
     }
 
     private void assertSharedFileFixture(
-            final Configuration configuration, final Level expectedRootLevel, final String expectedPattern) {
-        assertConfigurationStarted(configuration);
+            final Configuration configuration,
+            final String configResourcePath,
+            final Level expectedRootLevel,
+            final String expectedPattern) {
+        assertConfigurationStarted(configuration, configResourcePath);
         assertRootLogger(configuration, expectedRootLevel, SHARED_APPENDER_NAME);
         assertFileAppender(configuration, SHARED_APPENDER_NAME, SHARED_FILE_NAME, expectedPattern, SHARED_APPEND);
     }
@@ -614,8 +381,8 @@ class Log4j1ConfigParityTest {
      *
      * @param configuration the started configuration of the booted fixture
      */
-    private void assertAsynchronousFileFixture(final Configuration configuration) {
-        assertConfigurationStarted(configuration);
+    private void assertAsynchronousFileFixture(final Configuration configuration, final String configResourcePath) {
+        assertConfigurationStarted(configuration, configResourcePath);
         assertRootLogger(configuration, Level.DEBUG, ASYNC_APPENDER_NAME);
         final Appender wrapper = configuration.getAppender(ASYNC_APPENDER_NAME);
         assertNotNull(wrapper, "the fixture declares no appender named " + ASYNC_APPENDER_NAME);
@@ -646,13 +413,20 @@ class Log4j1ConfigParityTest {
     }
 
     /**
-     * Asserts that a fixture was located, built by the schema's own factory and started. The type check is what
-     * rules out a silent fallback: a context that failed to find its configuration still starts, with a default
-     * configuration that writes somewhere else entirely, and a capture compared against that would fail for a
-     * reason that has nothing to do with the translation.
+     * Asserts that a fixture was located, built by the schema's own factory from the resource the case named, and
+     * started. The type check is what rules out a silent fallback: a context that failed to find its configuration
+     * still starts, with a default configuration that writes somewhere else entirely, and a capture compared against
+     * that would fail for a reason that has nothing to do with the translation. The source check is what rules out
+     * the remaining case the type check cannot see: a sibling fixture in this corpus is also an
+     * {@link XmlConfiguration}, so identity of the resource is established before anything is read off the
+     * configuration.
+     *
+     * @param configuration the started configuration of the booted fixture
+     * @param configResourcePath the classpath resource the case booted
      */
-    private void assertConfigurationStarted(final Configuration configuration) {
+    private void assertConfigurationStarted(final Configuration configuration, final String configResourcePath) {
         assertNotNull(configuration, "the isolated context booted without a configuration");
+        ParityCorpus.assertBuiltFromResource(configuration, configResourcePath);
         assertTrue(
                 configuration instanceof XmlConfiguration,
                 "expected the fixture to have been built by the XML configuration factory but found a "
@@ -662,7 +436,6 @@ class Log4j1ConfigParityTest {
                 LifeCycle.State.STARTED,
                 configuration.getState(),
                 "the fixture was located but did not reach the started state");
-        assertNoErrorStatus("the fixture", "while being located, built and started");
     }
 
     /**

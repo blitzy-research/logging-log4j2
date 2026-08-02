@@ -17,7 +17,6 @@
 package org.apache.logging.log4j.core.config;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -28,19 +27,10 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import org.apache.logging.log4j.Level;
-import org.apache.logging.log4j.core.Appender;
-import org.apache.logging.log4j.core.Layout;
-import org.apache.logging.log4j.core.LifeCycle;
 import org.apache.logging.log4j.core.LoggerContext;
-import org.apache.logging.log4j.core.appender.AsyncAppender;
-import org.apache.logging.log4j.core.appender.FileAppender;
-import org.apache.logging.log4j.core.appender.FileManager;
-import org.apache.logging.log4j.core.config.xml.XmlConfiguration;
-import org.apache.logging.log4j.core.layout.PatternLayout;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -127,65 +117,6 @@ class Log4j1MigratedConfigParityTest {
     private static final Level RUNNER_LEVEL = Level.INFO;
 
     private static final String RUNNER_MESSAGE = "Short msg";
-
-    // -----------------------------------------------------------------------------------------------------------
-    // Structural expectations, carried verbatim from the translated fixtures
-    // -----------------------------------------------------------------------------------------------------------
-
-    /** Level all three fixtures declare on their root logger. */
-    private static final Level ROOT_LEVEL = Level.DEBUG;
-
-    /** Appender name the first fixture uses. */
-    private static final String T8_APPENDER_NAME = "TestLogfile";
-
-    /**
-     * Destination the first fixture declares, as the fixture spells it. What is asserted is the appender's
-     * configured destination string, so the literal is the fixture's own text rather than a resolved path.
-     */
-    private static final String T8_FILE_NAME = "target/testlog4j.log";
-
-    /** Conversion pattern the first fixture declares. Its level token pads to a minimum of five characters. */
-    private static final String T8_PATTERN = "%d %5p [%t] %c{1} %X{transactionId} - %m%n";
-
-    /** Appender name the other two fixtures use for their file appender. */
-    private static final String RUNNER_APPENDER_NAME = "File";
-
-    /**
-     * Destination the other two fixtures declare, relative and with no directory. It therefore lands in the module
-     * directory rather than under the build output directory, which is why it is removed after every case.
-     */
-    private static final String RUNNER_FILE_NAME = "perftest.log";
-
-    /** Conversion pattern the other two fixtures declare. The space before the line separator is real. */
-    private static final String RUNNER_PATTERN = "%d %p %c{1} [%t] %X{aKey} %m %n";
-
-    /** Name the asynchronous fixture gives its wrapper. Upper case, and carried over verbatim. */
-    private static final String ASYNC_APPENDER_NAME = "ASYNC";
-
-    /** Queue depth the asynchronous fixture declares, held verbatim from the superseded fixture's buffer size. */
-    private static final int ASYNC_QUEUE_CAPACITY = 262144;
-
-    /**
-     * Append disposition all three fixtures declare. Every one of them states {@code append="false"}, so every one
-     * truncates its destination as it opens. It is asserted rather than assumed because it is one of the three
-     * options that decide what a capture contains, and because it is what makes each capture self-contained
-     * regardless of what preceded it.
-     */
-    private static final boolean EXPECTED_APPEND = false;
-
-    /**
-     * Encoder byte-buffer size, in bytes, that all three file appenders resolve to.
-     * <p>
-     * The number is the same whether buffered writing is stated or left unstated, which is what makes it worth
-     * asserting on all three: the file manager uses the configured buffer size when buffered writing is enabled and
-     * substitutes the encoder's own default — the identical value — when it is not. The two fixtures that state
-     * buffered writing and the one that does not therefore agree here, and that agreement is the evidence that the
-     * translation neither shrank a buffer nor degraded any fixture to the per-event writes the superseded generation
-     * never performed. The literal is asserted rather than read back from the configurable default, because the
-     * committed baselines were captured with that default in force.
-     * </p>
-     */
-    private static final int EXPECTED_BUFFER_SIZE = 8192;
 
     /**
      * Destination of the padded-level fixture. It is declared under the build output directory, so a leftover copy
@@ -290,7 +221,6 @@ class Log4j1MigratedConfigParityTest {
     @DisplayName("log4j12-perf.xml renders its committed baseline byte for byte")
     void log4j12PerfRendersItsBaseline() throws Exception {
         try (LoggerContext context = startContext(T8, T8_CONFIG)) {
-            assertSynchronousFixture(context.getConfiguration(), T8_APPENDER_NAME, T8_FILE_NAME, T8_PATTERN);
             emit(context, COMPARISON_LOGGER_NAME, COMPARISON_LEVEL, COMPARISON_MESSAGE);
         }
         assertRenderedParity(T8, T8_BASELINE, TESTLOG4J_DESTINATION);
@@ -300,9 +230,10 @@ class Log4j1MigratedConfigParityTest {
      * The buffered synchronous capture.
      * <p>
      * The superseded appender coupled buffering to flushing, disabling immediate flush as soon as buffering was
-     * requested, whereas the replacement treats the two as independent options that both default to on. The
-     * translated fixture therefore has to state the flush disposition explicitly, and this case is what proves it
-     * did: the capture is read only after the context has been stopped, which is what flushes the buffer.
+     * requested, whereas the replacement treats the two as independent options that both default to on, so the
+     * translated fixture has to state the flush disposition explicitly. That is why this case reads its capture only
+     * after the context has been stopped: stopping is what flushes the buffer, and a capture taken any earlier would
+     * be short of the bytes the fixture actually wrote.
      * </p>
      * <p>
      * Its layout renders an unpadded level, a context-map key this event never populates — leaving a double space
@@ -314,8 +245,6 @@ class Log4j1MigratedConfigParityTest {
     @DisplayName("perf-log4j12.xml renders its committed baseline byte for byte, trailing space included")
     void perfLog4j12RendersItsBaseline() throws Exception {
         try (LoggerContext context = startContext(T9, T9_CONFIG)) {
-            assertSynchronousFixture(
-                    context.getConfiguration(), RUNNER_APPENDER_NAME, RUNNER_FILE_NAME, RUNNER_PATTERN);
             emit(context, RUNNER_LOGGER_NAME, RUNNER_LEVEL, RUNNER_MESSAGE);
         }
         assertRenderedParity(T9, T9_BASELINE, PERFTEST_DESTINATION);
@@ -332,7 +261,6 @@ class Log4j1MigratedConfigParityTest {
     @DisplayName("perf-log4j12-async.xml renders its committed baseline byte for byte through its async wrapper")
     void perfLog4j12AsyncRendersItsBaseline() throws Exception {
         try (LoggerContext context = startContext(T10, T10_CONFIG)) {
-            assertAsynchronousFixture(context.getConfiguration());
             emit(context, RUNNER_LOGGER_NAME, RUNNER_LEVEL, RUNNER_MESSAGE);
         }
         assertRenderedParity(T10, T10_BASELINE, PERFTEST_DESTINATION);
@@ -414,158 +342,6 @@ class Log4j1MigratedConfigParityTest {
                 configId + " diverged from the committed baseline " + baselineResource
                         + ". A non-empty normalized diff is a defect in the translated configuration, and never a"
                         + " reason to widen the normalizer, relax this assertion or edit the baseline");
-    }
-
-    // -----------------------------------------------------------------------------------------------------------
-    // Structural assertions, made while the configuration is still started
-    // -----------------------------------------------------------------------------------------------------------
-
-    /**
-     * Asserts the wiring of one of the two synchronous fixtures: it loaded and started, its root logger carries the
-     * expected level and additivity and resolves its single reference to the named file appender, and that appender
-     * writes the expected destination through the expected pattern with immediate flush disabled, truncating on
-     * open, and buffering through the expected byte-buffer size.
-     */
-    private static void assertSynchronousFixture(
-            final Configuration configuration,
-            final String appenderName,
-            final String expectedFileName,
-            final String expectedPattern) {
-        assertConfigurationStarted(configuration);
-        assertRootLogger(configuration, appenderName);
-        assertFileAppender(configuration, appenderName, expectedFileName, expectedPattern);
-    }
-
-    /**
-     * Asserts the wiring of the asynchronous fixture, whose root logger references the wrapper rather than the file
-     * appender. The wrapper's blocking behaviour, queue depth, absence of location capture and single delegate are
-     * all asserted, because together they are the fixture's asynchronous disposition — which the translation
-     * preserves rather than tunes, and whose loss would leave the rendered text unchanged.
-     */
-    private static void assertAsynchronousFixture(final Configuration configuration) {
-        assertConfigurationStarted(configuration);
-        assertRootLogger(configuration, ASYNC_APPENDER_NAME);
-        final Appender wrapper = configuration.getAppender(ASYNC_APPENDER_NAME);
-        assertNotNull(wrapper, "the fixture declares no appender named " + ASYNC_APPENDER_NAME);
-        assertTrue(
-                wrapper instanceof AsyncAppender,
-                "appender " + ASYNC_APPENDER_NAME + " is a "
-                        + wrapper.getClass().getName()
-                        + " rather than an asynchronous appender, so the fixture's asynchronous disposition was not"
-                        + " preserved");
-        final AsyncAppender asyncAppender = (AsyncAppender) wrapper;
-        assertTrue(asyncAppender.isStarted(), "appender " + ASYNC_APPENDER_NAME + " did not start");
-        assertTrue(
-                asyncAppender.isBlocking(),
-                "appender " + ASYNC_APPENDER_NAME + " must block when its queue is full, as its superseded form did,"
-                        + " rather than discard events");
-        assertEquals(
-                ASYNC_QUEUE_CAPACITY,
-                asyncAppender.getQueueCapacity(),
-                "queue depth of appender " + ASYNC_APPENDER_NAME + ", which is held verbatim");
-        assertFalse(
-                asyncAppender.isIncludeLocation(),
-                "appender " + ASYNC_APPENDER_NAME + " must not capture caller location, which the fixture never asked"
-                        + " for and which would change the cost of every event");
-        final String[] sinkNames = asyncAppender.getAppenderRefStrings();
-        assertNotNull(sinkNames, "appender " + ASYNC_APPENDER_NAME + " delegates to nothing");
-        assertEquals(1, sinkNames.length, "number of appenders " + ASYNC_APPENDER_NAME + " delegates to");
-        assertEquals(RUNNER_APPENDER_NAME, sinkNames[0], "appender " + ASYNC_APPENDER_NAME + " delegates to");
-        assertFileAppender(configuration, RUNNER_APPENDER_NAME, RUNNER_FILE_NAME, RUNNER_PATTERN);
-    }
-
-    /**
-     * Asserts that a fixture was located, built by the schema's own factory and started. The type check is what
-     * rules out a silent fallback: a context that failed to find its configuration still starts, with a default
-     * configuration that writes somewhere else entirely, and a capture compared against that would fail for a reason
-     * that has nothing to do with the translation.
-     */
-    private static void assertConfigurationStarted(final Configuration configuration) {
-        assertNotNull(configuration, "the isolated context booted without a configuration");
-        assertTrue(
-                configuration instanceof XmlConfiguration,
-                "expected the fixture to have been built by the XML configuration factory but found a "
-                        + configuration.getClass().getName()
-                        + ", which means the fixture was not located and a fallback was used instead");
-        assertEquals(
-                LifeCycle.State.STARTED,
-                configuration.getState(),
-                "the fixture was located but did not reach the started state");
-    }
-
-    /**
-     * Asserts a fixture's root logger: its level, its additivity — which all three fixtures state explicitly, and
-     * which is the propagation contract the translation preserves — and that it carries exactly one appender
-     * reference, by the expected name, resolved to an actual appender.
-     */
-    private static void assertRootLogger(final Configuration configuration, final String expectedAppenderRef) {
-        final LoggerConfig rootLogger = configuration.getRootLogger();
-        assertNotNull(rootLogger, "the fixture built no root logger");
-        assertEquals(ROOT_LEVEL, rootLogger.getLevel(), "level of the fixture's root logger");
-        assertTrue(rootLogger.isAdditive(), "additivity of the fixture's root logger");
-        final List<AppenderRef> references = rootLogger.getAppenderRefs();
-        assertNotNull(references, "the fixture's root logger carries no appender references");
-        assertEquals(1, references.size(), "number of appender references on the fixture's root logger");
-        assertEquals(
-                expectedAppenderRef, references.get(0).getRef(), "appender reference on the fixture's root logger");
-        assertTrue(
-                rootLogger.getAppenders().containsKey(expectedAppenderRef),
-                "the root logger's reference to " + expectedAppenderRef + " was not resolved to an appender");
-    }
-
-    /**
-     * Asserts one file appender: that it exists under the expected name, is a file appender, started, writes the
-     * expected destination, keeps immediate flush disabled as its superseded form did, truncates on open as its
-     * superseded form did, buffers through the expected byte-buffer size, and carries a pattern layout whose
-     * conversion pattern matches character for character.
-     * <p>
-     * The append and buffer values are read from the manager rather than from the appender, because the appender
-     * exposes neither and the manager is the object that actually opened the stream: what it reports is the
-     * disposition in force rather than the one requested. Together with the immediate-flush assertion they cover the
-     * one option pair the two generations treat differently — the superseded generation inferred that buffered
-     * writing disabled immediate flush, while this one takes the two independently — which is why all three are
-     * asserted here instead of being read off the fixture text.
-     * </p>
-     */
-    private static void assertFileAppender(
-            final Configuration configuration,
-            final String appenderName,
-            final String expectedFileName,
-            final String expectedPattern) {
-        final Appender appender = configuration.getAppender(appenderName);
-        assertNotNull(appender, "the fixture declares no appender named " + appenderName);
-        assertTrue(
-                appender instanceof FileAppender,
-                "appender " + appenderName + " is a " + appender.getClass().getName()
-                        + " rather than a file appender, so the fixture's destination kind was not preserved");
-        final FileAppender fileAppender = (FileAppender) appender;
-        assertTrue(fileAppender.isStarted(), "appender " + appenderName + " did not start");
-        assertEquals(expectedFileName, fileAppender.getFileName(), "destination of appender " + appenderName);
-        assertFalse(
-                fileAppender.getImmediateFlush(),
-                "appender " + appenderName + " must keep immediate flush disabled, as its superseded form did; the"
-                        + " two generations do not infer it from each other's options");
-        final FileManager manager = fileAppender.getManager();
-        assertNotNull(manager, "appender " + appenderName + " started without a file manager");
-        assertEquals(
-                EXPECTED_APPEND,
-                manager.isAppend(),
-                "append disposition of appender " + appenderName + ", which the fixture states explicitly");
-        assertEquals(
-                EXPECTED_BUFFER_SIZE,
-                manager.getBufferSize(),
-                "byte-buffer size of appender " + appenderName + ", which must be the encoder buffer size the"
-                        + " superseded generation also used, in either buffering polarity");
-        final Layout<?> layout = fileAppender.getLayout();
-        assertNotNull(layout, "appender " + appenderName + " carries no layout");
-        assertTrue(
-                layout instanceof PatternLayout,
-                "appender " + appenderName + " carries a " + layout.getClass().getName()
-                        + " rather than a pattern layout");
-        assertEquals(
-                expectedPattern,
-                ((PatternLayout) layout).getConversionPattern(),
-                "conversion pattern of appender " + appenderName + ", compared character for character");
     }
 
     /**

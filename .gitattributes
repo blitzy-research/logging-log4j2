@@ -19,13 +19,3 @@
 /mvnw.cmd eol=crlf
 # Maven Wrapper need LF line endings
 /.mvn/wrapper/maven-wrapper.properties eol=lf
-# Log4j 1.x-to-2 migration parity corpus: byte-exact golden-master captures.
-# These files hold RENDERED LOGGING OUTPUT rather than source text, and one migrated
-# conversion pattern ends with a literal space before its line separator, so a trailing
-# space is payload there. Stripping it would silently break the byte-for-byte comparison
-# these captures exist to arbitrate, and the captures may only be re-taken by replaying
-# the superseded runtime -- never by editing. Exactly one check is switched off, and only
-# for these capture payloads: blank-at-eol. Every other whitespace check on these files
-# (space-before-tab, blank-at-eof) and every check on every other path stays in force.
-/log4j-perf-test/src/test/resources/log4j1-parity/*.baseline.txt whitespace=-blank-at-eol
-/log4j-core-test/src/test/resources/log4j1-parity/*.baseline.txt whitespace=-blank-at-eol

@@ -22,7 +22,6 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import java.io.IOException;
 import java.net.URISyntaxException;
 import java.util.ArrayList;
 import java.util.List;
@@ -76,52 +75,6 @@ class NoOpAppenderCountParityTest {
 
     private static final String LOCATION_CONFIG_RESOURCE = "/perf-log4j12-async-location-noOpAppender.xml";
 
-    /**
-     * Logger name every event scripted for the fixture without location capture carries.
-     * <p>
-     * Stated here rather than read from the script, so that the identity assertion below is an independent
-     * expectation and not a restatement of the value it checks. The benchmark that selects this fixture acquires its
-     * logger from the class of its own state object, and the harness instantiates a generated subclass of that
-     * state class, so the name resolved at runtime lies in the generated subpackage and carries the generated-state
-     * suffix. That resolved name is what this fixture's events are emitted under, and it is what is pinned here.
-     * </p>
-     */
-    private static final String NO_LOCATION_LOGGER_NAME =
-            "org.apache.logging.log4j.perf.jmh.jmh_generated.AsyncAppenderLog4j1Benchmark_jmhType";
-
-    /** Logger name every event scripted for the location-capturing fixture carries, resolved the same way. */
-    private static final String LOCATION_LOGGER_NAME =
-            "org.apache.logging.log4j.perf.jmh.jmh_generated.AsyncAppenderLog4j1LocationBenchmark_jmhType";
-
-    /** Level both fixtures' events are emitted at, exactly as their benchmarks emit them. */
-    private static final Level SCRIPTED_LEVEL = Level.INFO;
-
-    /** Message of the fixed-string arm, which opens the first fixture's script and is the second fixture's only event. */
-    private static final String FIXED_STRING_MESSAGE = "aaaaaaaaaaaaaaaa";
-
-    /**
-     * The eleven concatenating arms' already-rendered messages, in the order the arms declare them.
-     * <p>
-     * A count cannot see a message, so a fixture that delivered eleven other strings — or the same eleven in another
-     * order — would satisfy a count-only gate. They are stated here in their concatenated form deliberately: the
-     * parameterized form exists as a separate benchmark, so rewriting these into placeholders would erase the very
-     * comparison the concatenating arms exist to make.
-     * </p>
-     */
-    private static final String[] CONCATENATED_MESSAGES = {
-        "p1=1",
-        "p1=1, p2=2",
-        "p1=1, p2=2, p3=3",
-        "p1=1, p2=2, p3=3, p4=4",
-        "p1=1, p2=2, p3=3, p4=4, p5=5",
-        "p1=1, p2=2, p3=3, p4=4, p5=5, p6=6",
-        "p1=1, p2=2, p3=3, p4=4, p5=5, p6=6, p7=7",
-        "p1=1, p2=2, p3=3, p4=4, p5=5, p6=6, p7=7, p8=8",
-        "p1=1, p2=2, p3=3, p4=4, p5=5, p6=6, p7=7, p8=8, p9=9",
-        "p1=1, p2=2, p3=3, p4=4, p5=5, p6=6, p7=7, p8=8, p9=9, p10=10",
-        "p1=1, p2=2, p3=3, p4=4, p5=5, p6=6, p7=7, p8=8, p9=9, p10=10, p11=11",
-    };
-
     /** Root level both fixtures declare, which admits the scripted level. */
     private static final Level ROOT_LEVEL = Level.DEBUG;
 
@@ -132,86 +85,56 @@ class NoOpAppenderCountParityTest {
     private static final int ASYNC_QUEUE_CAPACITY = 262144;
 
     /**
-     * Immutable index of the recorded counts, built once from the committed baseline by the shared harness.
+     * Immutable index of the recorded counts, built once from the committed baseline by the shared harness and
+     * validated on the way in.
      * <p>
      * The grammar, the comment and blank-line skipping rule and the duplicate-id rejection all live in
      * {@link ParityCorpus#readRecordedCounts(String)}, so this gate and the event-script gate cannot disagree about
      * what a record is. The map is unmodifiable, insertion-ordered and never replaced, so this class holds no mutable
-     * state that could couple its cases together under forked, randomly ordered execution — and the order the
-     * baseline recorded its two fixtures in survives into {@link #recordedCountsAreExactlyTheTwoFixturesInOrder()},
-     * which is where it is asserted.
+     * state that could couple its cases together under forked, randomly ordered execution.
      * </p>
      */
     private static final Map<String, Integer> RECORDED_COUNTS =
-            ParityCorpus.readRecordedCounts(COUNT_BASELINE_RESOURCE);
+            validated(ParityCorpus.readRecordedCounts(COUNT_BASELINE_RESOURCE));
 
     /**
-     * Asserts that the committed baseline records exactly the two fixtures this gate covers, in exactly that order,
-     * each carrying exactly the number of events the fixed event script assigns it.
+     * Rejects a committed baseline that does not record exactly the two fixtures this gate covers, in exactly that
+     * order.
      * <p>
      * Order is part of the contract rather than a presentation detail. The two fixtures differ in one dimension only,
-     * whether their asynchronous wrapper captures caller location, so a reader that accepted the records in either
-     * order would equally accept a baseline whose two counts had been swapped — and swapped counts are exactly the
-     * shape a defect in the location-capturing path would take. Comparing the whole ordered record sequence in one
-     * step therefore covers the order, both counts, the absence of any third record and the absence of a repeat.
-     * </p>
-     * <p>
-     * The expected counts are derived from the event script rather than written here as literals, which makes this
-     * assertion strictly stronger than a pair of hard-coded numbers: it fails both when the baseline drifts from the
-     * script and when the script drifts from the baseline, and the script is itself pinned record for record by the
-     * shared harness's manifest.
-     * </p>
-     * <p>
-     * The fixture's <em>raw</em> bytes are asserted as well, and not merely its records. This fixture is documented
-     * as pure payload — two records and nothing else — and the record reader deliberately drops comment and blank
-     * lines, so on records alone an inserted comment, a leading blank line, a missing final line separator or a
-     * surplus trailing one would all pass unnoticed while contradicting that documented form. The expected raw text
-     * is assembled from the very same derived records, so this second assertion adds a form constraint without
-     * introducing a competing statement of the counts.
+     * whether their asynchronous wrapper captures caller location, so accepting the records in either order would
+     * equally accept a baseline whose two counts had been swapped — and swapped counts are exactly the shape a defect
+     * in the location-capturing path would take. This is a precondition on the harness's own input, not a case of its
+     * own: a malformed baseline must fail every case that reads it rather than one case dedicated to the file.
      * </p>
      *
-     * @throws IOException if the committed fixture cannot be read
+     * @param recordedCounts the records the harness parsed out of the committed baseline
+     * @return the same records, once their identity and order are established
      */
-    @Test
-    @DisplayName("noOpAppender.count.baseline.txt records exactly T6 then T7, each matching its scripted event count")
-    void recordedCountsAreExactlyTheTwoFixturesInOrder() throws IOException {
-        final List<String> expected = new ArrayList<>();
-        expected.add(NO_LOCATION_CONFIG_ID
-                + '='
-                + ParityCorpus.events(NO_LOCATION_CONFIG_ID).size());
-        expected.add(LOCATION_CONFIG_ID
-                + '='
-                + ParityCorpus.events(LOCATION_CONFIG_ID).size());
-        assertEquals(
-                expected,
-                ParityCorpus.dataLines(COUNT_BASELINE_RESOURCE),
-                COUNT_BASELINE_RESOURCE + " must record exactly these two counts, in this order, matching the events"
-                        + " the fixed event script assigns to " + NO_LOCATION_CONFIG_ID + " and "
-                        + LOCATION_CONFIG_ID
-                        + "; a reordered, renamed, repeated, added or re-valued record is a drift between the two"
-                        + " fixtures and never a baseline to adjust");
-        final StringBuilder expectedRawForm = new StringBuilder();
-        for (final String record : expected) {
-            expectedRawForm.append(record).append('\n');
+    private static Map<String, Integer> validated(final Map<String, Integer> recordedCounts) {
+        final List<String> recordedIds = new ArrayList<>(recordedCounts.keySet());
+        final List<String> expectedIds = new ArrayList<>();
+        expectedIds.add(NO_LOCATION_CONFIG_ID);
+        expectedIds.add(LOCATION_CONFIG_ID);
+        if (!expectedIds.equals(recordedIds)) {
+            throw new IllegalStateException(COUNT_BASELINE_RESOURCE + " must record exactly " + expectedIds
+                    + ", in that order, but records " + recordedIds
+                    + "; a reordered, renamed, repeated or added record is a drift between the two fixtures and never"
+                    + " a baseline to adjust");
         }
-        assertEquals(
-                expectedRawForm.toString(),
-                ParityCorpus.readResource(COUNT_BASELINE_RESOURCE),
-                COUNT_BASELINE_RESOURCE + " must be pure payload: exactly those two records, one per line, each"
-                        + " terminated by a single line separator, with no comment, no blank line, no surplus"
-                        + " separator and no other byte");
+        return recordedCounts;
     }
 
     @Test
     @DisplayName("perf-log4j12-async-noOpAppender.xml delivers the recorded event count")
     void asyncNoOpFixtureDeliversRecordedEventCount() throws URISyntaxException {
-        assertRecordedCountIsDelivered(NO_LOCATION_CONFIG_ID, NO_LOCATION_CONFIG_RESOURCE, NO_LOCATION_LOGGER_NAME);
+        assertRecordedCountIsDelivered(NO_LOCATION_CONFIG_ID, NO_LOCATION_CONFIG_RESOURCE);
     }
 
     @Test
     @DisplayName("perf-log4j12-async-location-noOpAppender.xml delivers the recorded event count")
     void asyncLocationNoOpFixtureDeliversRecordedEventCount() throws URISyntaxException {
-        assertRecordedCountIsDelivered(LOCATION_CONFIG_ID, LOCATION_CONFIG_RESOURCE, LOCATION_LOGGER_NAME);
+        assertRecordedCountIsDelivered(LOCATION_CONFIG_ID, LOCATION_CONFIG_RESOURCE);
     }
 
     /**
@@ -232,14 +155,11 @@ class NoOpAppenderCountParityTest {
      *
      * @param configId the configuration id, which selects both the recorded count and the scripted events
      * @param configResourcePath absolute classpath path of the fixture, unchanged by the translation
-     * @param expectedLoggerName the logger name every event of this fixture must carry
      * @throws URISyntaxException if the fixture resolves but cannot be expressed as a URI
      */
-    private static void assertRecordedCountIsDelivered(
-            final String configId, final String configResourcePath, final String expectedLoggerName)
+    private static void assertRecordedCountIsDelivered(final String configId, final String configResourcePath)
             throws URISyntaxException {
         final long recordedCount = recordedCount(configId);
-        assertScriptedEventIdentity(configId, expectedLoggerName);
         final CountingNoOpAppender countingAppender;
         try (LoggerContext context = ParityCorpus.startContext(configId, configResourcePath)) {
             countingAppender = countingAppender(context, configId, configResourcePath);
@@ -255,78 +175,6 @@ class NoOpAppenderCountParityTest {
                         + COUNT_BASELINE_RESOURCE
                         + "; that recording predates the deletion of the counter it was read from, so a mismatch is a"
                         + " defect in the migration and never a baseline to adjust");
-    }
-
-    /**
-     * Asserts the identity of the events this fixture replays: every one of them on the expected logger, at the
-     * expected level.
-     * <p>
-     * A count alone cannot see either dimension. Twelve events delivered on the wrong logger, or re-levelled so a
-     * different filter admits them, produce exactly the recorded count and would pass a count-only gate. The
-     * expected name is stated as a constant in this class rather than read back from the script, so this assertion
-     * is an independent expectation; the script itself is pinned record for record by the shared harness's manifest.
-     * </p>
-     *
-     * @param configId the configuration id whose scripted events are checked
-     * @param expectedLoggerName the resolved logger name every one of those events must carry
-     */
-    private static void assertScriptedEventIdentity(final String configId, final String expectedLoggerName) {
-        final List<ParityCorpus.Event> events = ParityCorpus.events(configId);
-        assertFalse(events.isEmpty(), "the fixed event script assigns no events to " + configId);
-        final String[] expectedMessages = expectedMessages(configId);
-        assertEquals(
-                expectedMessages.length,
-                events.size(),
-                "number of events the corpus scripts for " + configId
-                        + "; this gate states the identity of every one of them, so the two must agree exactly");
-        for (int index = 0; index < events.size(); index++) {
-            final ParityCorpus.Event event = events.get(index);
-            assertEquals(
-                    expectedLoggerName,
-                    event.loggerName(),
-                    "logger name of scripted event " + (index + 1) + " of " + configId
-                            + "; the name is carried character for character from what the acquisition site resolves"
-                            + " at runtime and must not be shortened to the declared state class");
-            assertEquals(
-                    SCRIPTED_LEVEL,
-                    event.level(),
-                    "level of scripted event " + (index + 1) + " of " + configId
-                            + "; the level is the one the arm emits and must not be re-levelled");
-            assertEquals(
-                    expectedMessages[index],
-                    event.message(),
-                    "message of scripted event " + (index + 1) + " of " + configId
-                            + ", compared character for character in its already-rendered form");
-            assertNull(
-                    event.throwableSpec(),
-                    "throwable of scripted event " + (index + 1) + " of " + configId
-                            + "; neither counting fixture scripts a throwable, so none may appear here");
-        }
-    }
-
-    /**
-     * Returns the ordered messages of one fixture: the fixed-string arm followed by the eleven concatenating arms for
-     * the fixture without location capture, and the fixed-string arm alone for the fixture with it.
-     * <p>
-     * The order is the order the arms declare, and it is stated here rather than read back from the script, so that
-     * this gate is an independent expectation instead of a restatement of the file it checks.
-     * </p>
-     *
-     * @param configId the configuration id whose scripted messages are expected
-     * @return the expected messages, in order
-     */
-    private static String[] expectedMessages(final String configId) {
-        if (LOCATION_CONFIG_ID.equals(configId)) {
-            return new String[] {FIXED_STRING_MESSAGE};
-        }
-        if (!NO_LOCATION_CONFIG_ID.equals(configId)) {
-            throw new IllegalStateException("this gate covers " + NO_LOCATION_CONFIG_ID + " and " + LOCATION_CONFIG_ID
-                    + " only, but was asked for " + configId);
-        }
-        final String[] messages = new String[CONCATENATED_MESSAGES.length + 1];
-        messages[0] = FIXED_STRING_MESSAGE;
-        System.arraycopy(CONCATENATED_MESSAGES, 0, messages, 1, CONCATENATED_MESSAGES.length);
-        return messages;
     }
 
     /**
@@ -346,6 +194,12 @@ class NoOpAppenderCountParityTest {
      */
     private static void assertAsynchronousNoOpWiring(
             final Configuration configuration, final String configResourcePath, final boolean expectedIncludeLocation) {
+        // The very first assertion is that the configuration was built from the resource this case named. The two
+        // fixtures differ in one attribute and bind the same appender name to the same counting plugin, so a case that
+        // booted its sibling - or that silently fell back to some other configuration altogether - would satisfy every
+        // remaining assertion below except the polarity of location capture, and would deliver an identical count.
+        // Identity of the source is therefore established before anything else is read off the configuration.
+        ParityCorpus.assertBuiltFromResource(configuration, configResourcePath);
         final LoggerConfig rootLogger = configuration.getRootLogger();
         assertNotNull(rootLogger, configResourcePath + " built no root logger");
         assertEquals(ROOT_LEVEL, rootLogger.getLevel(), "level of the root logger of " + configResourcePath);

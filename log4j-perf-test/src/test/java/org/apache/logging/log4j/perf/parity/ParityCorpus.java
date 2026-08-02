@@ -17,6 +17,7 @@
 package org.apache.logging.log4j.perf.parity;
 
 import java.io.IOException;
+import java.net.URI;
 import java.net.URISyntaxException;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
@@ -34,6 +35,8 @@ import org.apache.logging.log4j.Level;
 import org.apache.logging.log4j.LogBuilder;
 import org.apache.logging.log4j.Logger;
 import org.apache.logging.log4j.core.LoggerContext;
+import org.apache.logging.log4j.core.config.Configuration;
+import org.apache.logging.log4j.core.config.ConfigurationSource;
 import org.apache.logging.log4j.core.config.Configurator;
 import org.junit.jupiter.api.Assertions;
 
@@ -43,11 +46,12 @@ import org.junit.jupiter.api.Assertions;
  * It exists so that a committed baseline and the capture compared against it are produced by <em>identical
  * code</em>, and it holds only what that requires: the fixed event script parsed from
  * {@value #EVENT_SCRIPT_RESOURCE} and replayed by {@link #replay(LoggerContext, String)}; the normalizer
- * {@link #normalize(String)}, which substitutes exactly four rendered elements and never a fifth; and
+ * {@link #normalize(String)}, which substitutes exactly four rendered elements and never a fifth;
  * {@link #startContext(String, String)}, which boots a configuration from its classpath
  * {@link java.net.URI} and therefore reads, sets and clears <em>no</em> system property — the property lookup is
  * skipped entirely, which is what lets several configurations boot in one virtual machine without contending
- * over one global key.
+ * over one global key; and {@link #assertBuiltFromResource(Configuration, String)}, which establishes that the
+ * configuration a case booted came from the resource that case named.
  * </p>
  * <p>
  * Three contracts live here rather than in the consuming tests, so that every consumer observes the same
@@ -629,6 +633,27 @@ final class ParityCorpus {
      * with the fixed pair of frames transcribed from the committed capture. A fresh array is built on every call,
      * so no mutable array is shared between callers.
      * </p>
+     * <p>
+     * <strong>What that substitution costs the oracle, stated so nobody reads more into T4's gate than it
+     * establishes.</strong> Because the frames are fabricated, the 270-byte comparison proves the throwable
+     * <em>rendering</em> and nothing about the real benchmark's <em>trace</em>. Specifically, it establishes that the
+     * message line renders first and the throwable follows on its own line; that the header line is the fully
+     * qualified type name, a colon, a space and the message; that each frame renders on its own line behind a single
+     * tab and {@code at }; that the plain converter was appended rather than an extended or root-cause-first variant,
+     * so no packaging data, no {@code Suppressed:} block and no {@code ... n more} tail appears; and that the capture
+     * ends with exactly one line separator after the last frame. It establishes nothing about the frames the real
+     * throwable carries: not their number, not the class, method, file or line of any of them, and not how the
+     * converter would render a cause chain, a suppressed exception or a truncated tail, none of which occur here.
+     * </p>
+     * <p>
+     * That boundary is a deliberate limitation rather than a gap, because trace <em>content</em> is not something a
+     * migration can change: a throwable's frames are captured by the virtual machine when it is constructed, so both
+     * generations were handed identical frames and only the rendering of them was ever in question. Fixing the frames
+     * therefore removes a non-deterministic variable from the comparison without removing anything the migration
+     * could have broken. Broadening the proof would mean rendering a real, environment-dependent trace, which by
+     * construction cannot be compared byte for byte against a committed capture, so it is deliberately no part of
+     * this corpus.
+     * </p>
      *
      * @param throwableSpec the optional fifth field of a script data line
      * @return a throwable whose type, message and stack trace are all fixed
@@ -656,6 +681,11 @@ final class ParityCorpus {
     /**
      * Returns the fixed stack trace given to the scripted throwable, newest frame first, exactly as the committed
      * capture renders it.
+     * <p>
+     * Two frames, because the committed capture holds two. They are frame identities transcribed from that capture,
+     * not a trace any code here produced, and what a comparison against them does and does not establish is set out
+     * on {@link #newFixedThrowable(String)}.
+     * </p>
      */
     private static StackTraceElement[] fixedThrowableStackTrace() {
         return new StackTraceElement[] {
@@ -837,6 +867,75 @@ final class ParityCorpus {
             }
         }
         return starting;
+    }
+
+    /**
+     * Asserts that a booted configuration was built from the very classpath resource the case named.
+     * <p>
+     * A type check alone cannot establish this. Every fixture in this corpus is XML, four of them bind the same
+     * appender name to the same destination and differ only in a root level or a conversion pattern, so a
+     * configuration built from the wrong one of them would satisfy a type check and could still render bytes that
+     * pass a comparison. Naming the resource in the assertion is what pins each case to its own fixture.
+     * </p>
+     * <p>
+     * Comparison is on the resolved filesystem path rather than on the URI text, because the two sides reach the same
+     * file by different routes — the expectation through {@link Class#getResource(String)}, the configuration through
+     * the file the configuration factory opened — and their URI spellings need not agree character for character even
+     * when they denote one file. The scheme is asserted first, both to state the assumption the path resolution rests
+     * on and to turn a configuration loaded from somewhere other than the filesystem into a named failure rather than
+     * an exception.
+     * </p>
+     *
+     * @param configuration the configuration the isolated context booted
+     * @param configResourcePath absolute classpath path the case asked for, which the configuration must have come
+     *     from
+     */
+    static void assertBuiltFromResource(final Configuration configuration, final String configResourcePath) {
+        final ConfigurationSource source = configuration.getConfigurationSource();
+        Assertions.assertNotNull(
+                source,
+                "the fixture built for " + configResourcePath
+                        + " carries no configuration source, so what it was built from cannot be established");
+        final URI actualLocation = source.getURI();
+        Assertions.assertNotNull(
+                actualLocation,
+                "the fixture built for " + configResourcePath + " reports the location '" + source.getLocation()
+                        + "', which cannot be resolved to a URI");
+        final URL expectedLocation = ParityCorpus.class.getResource(configResourcePath);
+        Assertions.assertNotNull(expectedLocation, "missing configuration resource: " + configResourcePath);
+        final URI expectedUri;
+        try {
+            expectedUri = expectedLocation.toURI();
+        } catch (final URISyntaxException malformed) {
+            throw new AssertionError(
+                    "the configuration resource " + configResourcePath + " resolves to '" + expectedLocation
+                            + "', which cannot be expressed as a URI",
+                    malformed);
+        }
+        Assertions.assertEquals(
+                resolvedPath(expectedUri, "the configuration resource " + configResourcePath),
+                resolvedPath(actualLocation, "the configuration source of the fixture built for " + configResourcePath),
+                "the fixture was built from a different resource than " + configResourcePath
+                        + "; a configuration located by some other route can satisfy every structural assertion in"
+                        + " these gates and still render the bytes of another fixture");
+    }
+
+    /**
+     * Resolves a location to an absolute, normalized filesystem path so that two spellings of one file compare equal.
+     *
+     * @param location the location to resolve, which must be a filesystem location
+     * @param what what the failure message should call the location
+     * @return the resolved path in its string form
+     */
+    private static String resolvedPath(final URI location, final String what) {
+        Assertions.assertEquals(
+                "file",
+                location.getScheme(),
+                what + " is '" + location
+                        + "', which does not name a filesystem location; these gates compare the file a fixture was"
+                        + " built from, so a fixture read from anywhere else cannot be compared and must not pass"
+                        + " unchecked");
+        return Paths.get(location).toAbsolutePath().normalize().toString();
     }
 
     /**

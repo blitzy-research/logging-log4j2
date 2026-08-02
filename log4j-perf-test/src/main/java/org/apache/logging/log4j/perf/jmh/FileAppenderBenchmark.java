@@ -17,7 +17,6 @@
 package org.apache.logging.log4j.perf.jmh;
 
 import java.io.File;
-import java.net.URISyntaxException;
 import java.net.URL;
 import java.util.concurrent.TimeUnit;
 import java.util.logging.FileHandler;
@@ -55,6 +54,7 @@ public class FileAppenderBenchmark {
     org.slf4j.Logger slf4jLogger;
     org.slf4j.Logger slf4jAsyncLogger;
     org.apache.logging.log4j.Logger log4j1Logger;
+    private LoggerContext log4j1Context;
     java.util.logging.Logger julLogger;
 
     @Setup
@@ -74,39 +74,29 @@ public class FileAppenderBenchmark {
         slf4jAsyncLogger = LoggerFactory.getLogger("Async");
         // The arm formerly driven by Log4j 1.x is now native Log4j 2, and it is deliberately NOT bootstrapped
         // through a global selector property. `log4j.configurationFile` above already belongs to the Log4j 2
-        // arm -- including its asynchronous loggers -- and ConfigurationFactory returns on the first key it
-        // resolves, so a second global key would silently mis-configure one of the two arms. Handing a
-        // non-null configuration URI to the LoggerContext constructor skips property lookup altogether,
-        // keeping both arms independent inside a single JVM and leaving the Log4j 2, Logback and JUL arms
-        // exactly as they were. The context itself is owned by the benchmark-scoped holder at the foot of
-        // this class and shared by every JMH worker, because this state is thread-scoped while the
-        // superseded generation shared one repository -- and one file appender -- per JVM.
-        final LoggerContext log4j1Context = Log4j1ArmContext.acquire();
-        boolean armReady = false;
-        try {
-            // The logger name is preserved byte-for-byte: Log4j 1.x derived it from clazz.getName(), which is
-            // exactly the argument used here, so the events stay on the logger they have always used.
-            log4j1Logger = log4j1Context.getLogger(FileAppenderBenchmark.class.getName());
+        // arm -- which owns six loggers here, including the asynchronous ones -- and ConfigurationFactory
+        // returns on the first key it resolves, so a second global key would silently mis-configure one of
+        // the two arms. Handing a non-null configuration URI to the LoggerContext constructor skips property
+        // lookup altogether, keeping both arms independent inside a single JVM and leaving the Log4j 2,
+        // Logback and JUL arms exactly as they were.
+        final URL log4j1ConfigLocation = FileAppenderBenchmark.class.getResource("/log4j12-perf.xml");
+        log4j1Context = new LoggerContext("FileAppenderBenchmark", null, log4j1ConfigLocation.toURI());
+        log4j1Context.start();
+        // The logger name is preserved byte-for-byte: Log4j 1.x derived it from clazz.getName(), which is
+        // exactly the argument used here, so the events stay on the logger they have always used.
+        log4j1Logger = log4j1Context.getLogger(FileAppenderBenchmark.class.getName());
 
-            julFileHandler = new FileHandler("target/testJulLog.log");
-            julLogger = java.util.logging.Logger.getLogger(getClass().getName());
-            julLogger.setUseParentHandlers(false);
-            julLogger.addHandler(julFileHandler);
-            julLogger.setLevel(Level.ALL);
-            armReady = true;
-        } finally {
-            if (!armReady) {
-                // The JUL handler above can fail with an IOException, and JMH does not tear down a state
-                // whose setup threw, so the shared context is handed back here rather than left started.
-                Log4j1ArmContext.release();
-            }
-        }
+        julFileHandler = new FileHandler("target/testJulLog.log");
+        julLogger = java.util.logging.Logger.getLogger(getClass().getName());
+        julLogger.setUseParentHandlers(false);
+        julLogger.addHandler(julFileHandler);
+        julLogger.setLevel(Level.ALL);
     }
 
     @TearDown
     public void tearDown() {
         System.clearProperty("log4j.configurationFile");
-        Log4j1ArmContext.release();
+        Configurator.shutdown(log4j1Context);
         System.clearProperty("logback.configurationFile");
 
         deleteLogFiles();
@@ -203,55 +193,5 @@ public class FileAppenderBenchmark {
     public void julFile() {
         // must specify sourceClass or JUL will look it up by walking the stack trace!
         julLogger.logp(Level.INFO, getClass().getName(), "julFile", MESSAGE);
-    }
-
-    /**
-     * Benchmark-scoped owner of the native Log4j 2 context that replaces the process-wide Log4j 1.x
-     * repository the migrated arm used to reach through a global selector property.
-     *
-     * <p>The superseded generation kept one repository -- and therefore one file appender -- per JVM,
-     * shared by every JMH worker thread. Because the enclosing state is thread-scoped, a context built
-     * inside {@code setUp()} would instead be built once per worker, giving each worker its own appender
-     * and its own handle on {@code target/testlog4j.log}, which would change exactly the sharing and
-     * contention this benchmark measures. The context is therefore held here, created by whichever worker
-     * sets up first, shared by all the others, and reference counted so that it is stopped exactly once,
-     * when the last worker of the trial tears down. Dropping the reference on the way out means a run that
-     * replays several trials in a single JVM, such as {@code -f 0}, gets a freshly started context for each
-     * trial rather than a stopped one.</p>
-     */
-    private static final class Log4j1ArmContext {
-
-        private static LoggerContext context;
-
-        private static int users;
-
-        private Log4j1ArmContext() {}
-
-        static synchronized LoggerContext acquire() throws URISyntaxException {
-            if (context == null) {
-                final URL configLocation = FileAppenderBenchmark.class.getResource("/log4j12-perf.xml");
-                final LoggerContext starting = new LoggerContext("FileAppenderBenchmark", null, configLocation.toURI());
-                try {
-                    starting.start();
-                } catch (final RuntimeException | Error startFailure) {
-                    // A context that was never published cannot be stopped by anyone else.
-                    Configurator.shutdown(starting);
-                    throw startFailure;
-                }
-                context = starting;
-            }
-            users++;
-            return context;
-        }
-
-        static synchronized void release() {
-            if (users == 0) {
-                return;
-            }
-            if (--users == 0) {
-                Configurator.shutdown(context);
-                context = null;
-            }
-        }
     }
 }

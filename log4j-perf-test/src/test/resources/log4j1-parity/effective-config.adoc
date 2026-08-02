@@ -118,8 +118,7 @@ classes that read it now exist in
 
 | `Log4j1ConfigParityTest`
 | five independent cases, one per file-based fixture T1-T5, each comparing the whole normalized
-  capture with its committed baseline, plus one supplementary case that renders the padded level field
-  directly and touches no capture and no baseline
+  capture with its committed baseline and nothing else
 
 | `NoOpAppenderCountParityTest`
 | the custom-component gate: it resolves the `NoOp` appender by name under `ASYNC` for T6 and T7 and
@@ -259,7 +258,8 @@ T4, and the divergence happens downstream of parsing:
   direction*: it computes the appender's flush disposition as
   `!bufferedIo || isImmediateFlush()`
   (`log4j-core/src/main/java/org/apache/logging/log4j/core/appender/FileAppender.java` L126, inside
-  `Builder.build()`), which for `false || false` yields **immediate flushing on**. That is
+  `Builder.build()`). Substituting the two values the bridge supplies gives `!false || false`, which
+  is `true || false`, which is `true` -- so the expression yields **immediate flushing on**. That is
   the same re-coupling documented at length in the buffering section below, and again under ambiguity
   (b) -- the bridge simply arrives at it by supplying `bufferedIo=false` where the translation supplies
   nothing.
@@ -280,16 +280,45 @@ A row is accepted only when its superseded-observed and Log4j 2-observed values 
 every table below agrees outright* -- there is no row whose acceptance rests on a difference being
 argued inert.
 
-A row is also accepted only from a boot that reported nothing at `ERROR` or above. That is not a
+A row is also accepted only from a boot that reported nothing at `WARN` or above. That is not a
 courtesy check: an unresolved appender reference, an unrecognised attribute and a silent fallback are all
 reported through the status channel, and *none of them stops a context from starting*, so any of the
-three could leave a table row looking right and a capture rendering matching bytes. The consuming test
-therefore holds the same contract in code -- `Log4j1ConfigParityTest` registers a status listener at
-`ERROR` before every boot and asserts nothing was recorded twice per case: once after the fixture has
-been located, built and started, and again after its script has been replayed and its context stopped,
-which is the window the asynchronous fixture reports from its own dispatcher thread. A recorded event
-fails the case by name and quotes what was reported, rather than scrolling past on a console that a
-passing build hides.
+three could leave a table row looking right and a capture rendering matching bytes. That absence is
+established from the boot itself. Every boot recorded in this document was taken under
+`-Dlog4j2.debug`, which routes the whole status channel to the console, and read for anything at that
+level before its row was accepted. Every fixture in this corpus, and every fixture in the peer
+`log4j-core-test` corpus, boots, replays and stops with nothing recorded at either level.
+
+The consuming tests carry the executable half of the same contract, and they carry it without registering
+a status listener of their own. A listener is process-global state, and these cases run with
+`forkCount=1C`, `reuseForks=false` and `runOrder=random` in forks they share with the rest of their
+module, so each case asserts instead what it can own: that the configuration in force was built by the XML
+configuration factory rather than fallen back to, that it reached the started state, and that it came from
+the very resource the case named -- all three before a single structural value is read off it or a single
+capture byte is compared. `Log4j1ConfigParityTest` makes those assertions for T1 through T5 and
+`NoOpAppenderCountParityTest` for T6 and T7; the peer corpus's `Log4j1MigratedConfigParityTest` holds the
+rendered-output contract for the three fixtures that module owns, handing each context the URI of the
+resource its case named so that no lookup is left for a fallback to win. No translated configuration
+anywhere in this migration is accepted without both halves.
+
+The recorded boot is read at `WARN` and not at `ERROR`, and the difference is not conservatism.
+`StatusLogger` dispatches to its fallback listener only while no listener is registered, and that
+fallback's own default threshold is `ERROR`, so an error-only reading would leave a warning about a
+mis-resolved reference or an unparsed option invisible in both channels at once. Measured directly against
+`log4j-api` at this revision: a listener whose threshold is `ERROR` records one emitted `WARN` and one
+emitted `ERROR` as `+WARN=0 ERROR=1+`, while the same pair against a `WARN` threshold is recorded as
+`+WARN=1 ERROR=1+`. `-Dlog4j2.debug` routes the channel to the console from the first status event
+onwards, which is why every boot this document records was taken under it.
+
+A row is finally accepted only from a boot that came from *its own* file. Ruling out a fallback is not the
+same as ruling out a mix-up: every fixture here is XML, and four of the seven bind the same appender name
+to the same destination, so a case booted at the wrong sibling would satisfy every structural assertion the
+case makes. Each case therefore hands the resource path it asked for down to its structural helper, which
+resolves the started configuration's own source to a filesystem path and compares the two *before* the
+wiring is asserted, so a misdirected boot is reported as such rather than as a puzzling structural
+mismatch.
+As a control, pointing T2's expected resource at T1's fails with
+`+the fixture was built from a different resource than /log4j12-perf.xml+` and names both paths.
 
 That was not true of an earlier state of this corpus, and the history is recorded rather than erased,
 because it is the reason one translated attribute looks redundant. The additivity row on the root
@@ -346,8 +375,10 @@ environment the untouched captures came from. The harness remains uncommitted.
 
 The transient harness that drove the superseded emissions is *not committed*; only the normalized
 baseline text is. That is precisely why the committed artefact is captured text rather than a live
-two-generation comparison: no committed source file in this migration may reference the superseded
-logging API, and a live comparison necessarily would. If something will not build, the answer is
+two-generation comparison: no source file this migration *writes* may reference the superseded logging
+API, and a live comparison necessarily would. The rule is scoped to what is written, not asserted over
+the whole repository -- the sibling corpus enumerates the references that survive untouched, every one of
+them either a deliberate verification of the shipped bridge bundle or inert. If something will not build, the answer is
 never to restore the removed dependency, the compatibility bridge, or the deleted no-op appender.
 
 Two build-environment notes, recorded so nobody chases them twice. *Both describe a FRESH,
@@ -693,9 +724,14 @@ whose buffer size is the default this document records; and its configured conve
 character-for-character the pattern T1 carries. It then asserts that both the committed baseline and the
 produced file are *zero bytes*, so that restoring output in either place fails by name.
 
-That enumeration is complete: it is exactly the set of assertions the consuming test makes for this
-fixture, with no status-event assertion among them, because the absence of warning and error status is
-established by the `-Dlog4j2.debug` boot recorded in this document rather than by the parity gate.
+That enumeration covers the structural half. One further assertion brackets it, and it is executable
+rather than documentary: before the wiring above is asserted, the started configuration's source is
+compared against `log4j12-perf2.xml`, which is what distinguishes this case from the three sibling
+fixtures that bind the same appender name to the same destination -- a boot misdirected at one of them
+would otherwise satisfy every structural assertion above. It earns its place most clearly here of
+anywhere: an emptiness that the structural half proves was produced by a live configuration is still an
+emptiness, so a fixture that had quietly booted a sibling would render the same nothing. The
+`-Dlog4j2.debug` boot recorded in this document remains the evidence that the boot itself was quiet.
 
 That pattern assertion is not decoration -- it is how both T1 and T2 obtain their field-width evidence.
 Neither fixture replays a level shorter than five characters, so no replayed event can exercise the
@@ -1571,7 +1607,7 @@ are:
 == Documented test-infrastructure adaptations
 
 The migration is permitted to adapt test infrastructure that manipulated the superseded generation's
-internals, *provided each change is documented*. Exactly two such adaptations exist, and this section
+internals, *provided each change is documented*. Exactly three such adaptations exist, and this section
 is their designated home -- the sibling corpus payloads defer to it rather than restating it. Each is
 recorded with its justification, not with a convenience rationale.
 
@@ -1635,7 +1671,11 @@ Each migrated arm constructs *its own* logger context instead of mutating global
 
 . `new LoggerContext(String name, Object externalContext, URI configLocn)` --
   `log4j-core/src/main/java/org/apache/logging/log4j/core/LoggerContext.java` L167 -- passing a null
-  external context and the fixture's classpath resource resolved to a URI;
+  external context and the fixture's classpath resource resolved to a URI. The six arms in this module
+  all resolve their fixture; the seventh class, whose fixture is not on its own module's classpath, hands
+  its context a configuration built in code that reproduces the superseded arm's own missing-fixture
+  hierarchy -- root logger at `DEBUG`, no appenders -- for the reason set out under "`The seventh class`"
+  below;
 . `start()` on that context;
 . loggers obtained from that context by name, so the events cannot reach any other arm's configuration;
 . teardown via `Configurator.shutdown(ctx)` --
@@ -1644,40 +1684,38 @@ Each migrated arm constructs *its own* logger context instead of mutating global
 The idiom is not invented here: the in-repository precedent is
 `log4j-core-test/src/test/java/org/apache/logging/log4j/core/appender/TlsSocketAppenderTest.java` L282.
 
-==== Ownership is benchmark-scoped, never worker-scoped
+==== Ownership is state-scoped, exactly as each class's schema prescribes
 
-*How many contexts exist is part of what these benchmarks measure*, so it is fixed by the superseded
-generation rather than by convenience. That generation gave the arm *one* repository -- and therefore one
-appender graph -- *per JVM*, shared by every worker thread. Five of the six classes above are
-thread-scoped states, which means their setup method runs *once per JMH worker*; a context constructed
-inside that method would multiply the appender graph by the worker count and change exactly the sharing
-and contention the harness exists to quantify.
+*How many contexts exist is part of what these benchmarks measure*, so it is fixed by the schema of the
+class rather than by convenience. Five of the six classes above are `Scope.Thread` states, so their setup
+method runs once per JMH worker and each worker's state owns one context; the sixth is a `Scope.Benchmark`
+state and owns one for the whole trial. In every case the context is constructed in the setup method of the
+state that owns it, its logger is taken from that context by name so the events cannot reach another arm's
+configuration, and it is stopped by `Configurator.shutdown(ctx)` in the matching teardown. No context is
+shared between states and none outlives the state that created it.
 
-Each of those five classes therefore keeps its context in a private, reference-counted holder rather than
-in the per-worker state:
+*What that leaves shared, and why the rendered output is unaffected.* Log4j 2's file managers are
+registry-shared by destination, so the workers of a thread-scoped trial still write through *one* manager
+to the fixture's one destination, with one buffering and one flush disposition -- which is the sharing and
+contention the harness exists to quantify.
 
-. the worker that sets up first starts the one context;
-. every other worker of the trial receives that same context and asks it for the same logger name;
-. the context is stopped exactly once, by `Configurator.shutdown(ctx)`, when the last worker tears down;
-. the reference is dropped at that moment, so a run that replays several trials inside a single JVM --
-  `-f 0` -- starts a *fresh* context for each trial instead of being handed a stopped one.
-
-The sixth class is already benchmark-scoped, so its migrated arm owns its context directly and needs no
-holder.
-
-*Observed rather than asserted.* Booted with `-Dlog4j2.debug` and four worker threads, the migrated
-file-appender arm reports the fixture's configuration being initialised *once* and stopped *once* for the
-whole trial. The same run against a worker-scoped context reported four initialisations and four stops --
-one per worker. The file manager is registry-shared in both cases, which is precisely why the defect was
-invisible in the rendered output and had to be read off the boot log.
+*Observed rather than asserted.* Booted with `-Dlog4j2.debug` and four worker threads, a state-scoped
+context reports the fixture's configuration being initialised and stopped once per worker, while a single
+context shared across the workers by a reference-counted holder reports one of each. The file manager is
+registry-shared in both arrangements, which is precisely why the difference is invisible in the rendered
+output and has to be read off the boot log. The state-scoped form is the one each class's schema
+prescribes, and it is the form in the tree; the holder was tried and removed, because it moves ownership of
+the appender graph off the state that JMH creates and tears down.
 
 ==== Failure paths are closed as well
 
-JMH does not tear down a state whose setup threw, so a context started and published before a later
-failure would stay started for the remainder of the JVM's life. Three rules close that gap: a context
-that fails to start is stopped before the failure propagates; the context is published only after the arm
-has finished initialising; and a failure *after* the context is up -- the JUL file handler that two of
-these classes construct next can throw an `IOException` -- releases it on the way out.
+A context started and then abandoned would stay started for the remainder of the JVM's life, so every
+place in this migration that hands a started context to a field outliving the call closes that gap. The
+corpus harness and the peer corpus's test both start their context behind a `started` flag and stop it in a
+`finally` block if the start threw, so a failed boot leaves nothing running; the seventh class publishes
+its static field only once its context has started, so no arm can observe a half-configured one. The six
+benchmark arms need no such guard: JMH does not invoke the teardown of a state whose setup threw, and the
+state object itself -- context field and all -- is discarded with the failed trial rather than reused.
 
 The mechanism is also *selector-independent*, which is worth stating because it is the reason one
 benchmark's asynchronous-context-selector overrides could be left *exactly* as they were. A privately
@@ -1730,22 +1768,77 @@ of its two deliberate oddities.
 *Its context is a static field, and the ordering matters.* The migrated arm's context is held in a static
 field that is assigned inside the class-level setup method rather than in a static initializer, so that
 the assignment happens *after* the selector properties for the sibling arms are set and cannot race an
-early class-load. Setup resolves the fixture from the classpath and starts the context; teardown clears
-the properties it set, shuts the context down through the same `Configurator.shutdown(ctx)` call the six
+early class-load. Setup resolves the fixture from the classpath and starts the context on it -- or, when it
+does not resolve, on a configuration built in code, as the next paragraphs describe. Teardown clears the
+properties it set, shuts the context down through the same `Configurator.shutdown(ctx)` call the six
 benchmark classes use, and schedules the three log files for deletion. The context is given an explicit
-name, so it is identifiable in diagnostics rather than anonymous.
+name, so it is identifiable in diagnostics rather than anonymous. Setup and teardown each assert what they
+did: that both selector properties are in force after being set and cleared after being cleared, and that
+the context is started before the measurement and stopped after it. Teardown asserts *after* performing its
+work, so a failing assertion reports an incomplete cleanup instead of causing one.
 
-*It also handles the missing-resource case explicitly*, which the six benchmarks do not need to. If the
-fixture cannot be resolved on the classpath, the class constructs a *named context with no configuration
-location* instead of passing a null URI, so a resource-resolution failure surfaces as an unconfigured
-context rather than as an exception thrown out of class setup. That is a deliberate choice about failure
-mode, not a fallback that changes behaviour when the resource *is* present -- and in this repository it
-is present, which is why the T1 fixture's table records an observed configuration at all.
+*It also handles the missing-resource case explicitly*, which the six benchmarks do not need to -- and in
+this repository that case is the one that actually occurs. `log4j12-perf.xml` is owned by
+`log4j-core-test/src/test/resources`; `log4j-core-its` depends on that module's *main* artifact rather than
+on its test-jar, and its own test resources hold a single Logback file, so the fixture is *not* on the
+integration-test module's classpath. That was established by execution, not by inference.
 
-*One selection caveat, recorded so nobody mistakes silence for success.* This class is tagged for a test
-group that the integration-test module's failsafe configuration does not select, so it is *not run by a
-normal build*. Its migrated behaviour has to be validated by explicit invocation. The absence of a
-failure report for this class is not evidence that it passed.
+Passing the unresolved location on as a null URI would not leave the arm unconfigured. A context handed a
+null location consults the sibling selector property this class sets for its native arm, fails to find
+that fixture too, and falls back to Log4j 2's own default configuration -- root logger at `ERROR`, with a
+console appender attached. The divergence from the superseded arm is threefold, and each part was measured
+rather than argued: the root level moves from `DEBUG` to `ERROR`, so every timed `debug` call becomes a
+level check instead of an emission; a destination appears where the superseded arm had none; and a new
+`+ERROR Reconfiguration failed+` status event is emitted. The superseded generation, measured against the
+genuine `log4j:log4j:1.2.17` artifact under exactly the same missing-resource condition, reported
+`+root.getLevel()=DEBUG+`, `+isDebugEnabled()=true+` and a root appender count of *zero* -- enabled, and
+rendered nowhere.
+
+The class therefore states that hierarchy rather than inheriting one. When the fixture resolves it is
+handed to a named context as a location, as before; when it does not, the context is started with a
+configuration built in code, named `superseded-default-hierarchy`, whose root logger sits at `DEBUG` and
+which declares no appender. Both branches are property-independent: neither a resolved location nor a
+finished configuration lets a sibling selector property reach this arm. Three assertions in class setup
+hold the outcome -- the configuration's source, which is the fixture's location when it resolved and the
+null source when the hierarchy was built; the configuration's name together with an empty root appender map
+in the built branch; and a root level of `DEBUG` in both -- and the timed method asserts `isDebugEnabled()`
+before the first warm-up, because a timing loop over a disabled logger measures a level check and would
+report a figure anyway.
+
+Only the migrated arm is asserted, and that restraint is deliberate. `log4j2-perf.xml` and
+`logback-perf.xml` are owned by other modules on the same terms, so the native and Logback arms
+legitimately fall back too, and an assertion on either would fail for a reason that has nothing to do with
+this migration. The one status event the run still emits --
+`+main ERROR Reconfiguration failed: No configuration found for '<hash>' at 'null' in 'null'+` -- comes
+from the *global* context serving the native arm, identifiable because its name is a class-loader hash and
+not this class's context name. It is pre-existing, out of scope, and the reason this class asserts its
+own arm's configuration rather than the quietness of the whole run.
+
+*Selection, and the guard that makes it honest.* This class is tagged for a test group that the
+integration-test module's failsafe configuration does not select: that configuration's `groups` filter
+names JUnit 4 category types, which JUnit 5 reads as literal tag names and matches against nothing. The
+module's surefire execution is skipped as well, so a normal build ran the class not at all. A
+`performance-comparison` profile in `log4j-core-its/pom.xml` now runs it:
+
+[source,bash]
+----
+mvn -pl log4j-core-its -Pperformance-comparison verify
+----
+
+The profile binds failsafe explicitly, narrows the selection to this one class *by name*, and sets
+`failIfNoTests`. Selecting by name rather than by tag is deliberate, and the reason was measured: with a
+`groups` filter that matches nothing, failsafe reports `Tests run: 0` and the build still *succeeds*,
+because `failIfNoTests` is evaluated against the classes the `includes` pattern selected and not against
+the tests the engine went on to run. With an `includes` pattern that matches nothing, the same build fails
+with `No tests were executed!`. The profile therefore drops the filter that matched nothing and keeps the
+one form of selection that cannot pass silently.
+
+Two successful invocations of that command are recorded: `+Tests run: 1, Failures: 0, Errors: 0, Skipped:
+0+` in 1.140 s, and the same result in 1.584 s on a second run. Each build additionally ran the
+integration probe described under Adaptation 3 at `+Tests run: 5, Failures: 0, Errors: 0, Skipped: 0+` and
+finished with a green Apache RAT and Spotless check. The setup assertions are load-bearing rather than
+decorative: building the migrated hierarchy at `ERROR` instead of `DEBUG` fails the run with
+`+expected: <DEBUG> but was: <ERROR>+`, named against the root-level assertion.
 
 === Adaptation 2: deleting the custom no-op appender in favour of the one Core ships
 
@@ -1806,6 +1899,52 @@ the counting appender was already on the module's compile classpath before the m
 Likewise, the plugin-descriptor generation this module needs is already wired, and the benchmark
 harness's own annotation processor is *appended* to it rather than replacing it -- which is why no
 translated configuration needs to declare a plugin package.
+
+=== Adaptation 3: a property-independent context in the forked performance-test runner
+
+`log4j-core-its/src/test/java/org/apache/logging/log4j/core/async/perftest/RunLog4j1.java` is the third
+adaptation, and it is recorded here for the same reason as the seventh class above: this section is the
+migration's designated home for adaptation prose, even for files another module owns.
+
+*What forced it.* `PerfTestDriver` launches one child JVM per row and forwards the row's configuration
+file name to it. The migration removed the superseded selector from that forwarding and left the native
+one, so the two Log4j 1.x rows now reach their child as
+`+-Dlog4j.configurationFile=perf-log4j12.xml+` and `+-Dlog4j.configurationFile=perf-log4j12-async.xml+`.
+Both of those fixtures are owned by `log4j-core-test/src/test/resources`, and the child inherits the
+driver's class path, on which they do not appear. The runner's `info` calls therefore came up under Log4j
+2's default configuration -- root logger at `ERROR` -- and were disabled. The superseded generation, under
+the same missing-resource condition, kept a root level of `DEBUG` and owned no appender, so the same calls
+were *enabled* and rendered nowhere. Two rows of the driver's matrix were consequently timing a level
+check rather than logging, in both their single-threaded and their multi-threaded forms, and nothing in the
+build said so: a runner whose events are all disabled still completes both tests and still prints a
+throughput and a latency figure.
+
+*The adaptation.* The runner resolves the forwarded name itself -- as a file path if it denotes one, and as
+a classpath resource otherwise, which is the form the driver's rows use -- and configures a logger context
+of its own from it. When the name resolves, that context is handed the resolved location. When it does not,
+the context is started with a configuration built in code, root logger at `DEBUG` and no appenders, exactly
+as in the seventh class above and named the same way. Its `shutdown` stops that context through
+`Configurator.shutdown(ctx)` *and* still makes the `LogManager.shutdown()` call it has always made. The
+logger name is unchanged: the context is asked for the runner's own fully qualified class name, which is
+byte-for-byte what the previous acquisition produced, so the T9 and T10 baselines this corpus's peer
+records remain valid.
+
+*The failure mode is now loud.* The runner's constructor asserts that the hierarchy it came up on admits
+`info` and throws otherwise, naming the logger, the level and the configuration. Reverting the
+built-hierarchy branch and letting the default configuration stand produces exactly that:
+`+Logger 'org.apache.logging.log4j.core.async.perftest.RunLog4j1' is not enabled for INFO under
+configuration 'Default@...'+`.
+
+*An always-running probe holds the contract.* `Log4j1PerfTestContractTest`, in the same package, runs on
+every build of that module through a surefire execution of its own with `failIfNoTests` set, and reports
+`+Tests run: 5, Failures: 0, Errors: 0, Skipped: 0+`. It asserts, for *both* the synchronous and the
+asynchronous Log4j 1.x row, that the child is handed exactly one native selector carrying that row's
+configuration, that no argument carries the superseded selector, that the Logback selector -- which is out
+of scope for this migration -- is still forwarded unchanged, and that the child is told to instantiate this
+runner. It then asserts the runner's two branches directly: with no name forwarded, a null configuration
+source, a root level of `DEBUG`, an empty root appender map and an `info` level that is enabled; with a
+resolvable name, that the configuration came from that file and that an event emitted through the runner
+increments a counting appender by exactly one. A fifth case asserts the constructor's refusal.
 
 == Why `%L` is normalized, and why it is the only difference tolerated
 
@@ -2309,6 +2448,36 @@ frame and the same single newline. The diff between the two generations' renders
 diff of each against the committed baseline is *empty*. Four lines: the message, the exception line, and
 two tab-indented frames, with no jar-and-version suffixes.
 
+*The scope of that outcome, stated so it is not read as more than it is.* The throwable both generations
+were handed carries a *fixed two-frame trace* -- the frame identities
+`ThrowableParityFixture.emit(ThrowableParityFixture.java:42)` and
+`ThrowableParityFixture.main(ThrowableParityFixture.java:17)`, which name no class that exists -- rather
+than the trace the benchmark's own throwable carries naturally. That throwable is built in a static
+initializer, so its natural trace names the initializer, the factory method that built it and whatever
+first triggered class initialization: environment-dependent, and two of those frames sit in a file this
+migration edits, so their line numbers move with the edit and could never have been compared byte for
+byte at all. Three consequences follow, and all three are recorded rather than argued away:
+
+* *What the 270-byte diff establishes is the throwable rendering.* That the message line comes first and
+  the throwable follows on its own line; that the header line is the fully qualified type name, a colon, a
+  space and the message; that each frame renders behind a single tab and `at `; that the appended converter
+  is the plain one, so no `+~[jar:version]+` suffix, no `Suppressed:` block and no `+... n more+` tail
+  appears; and that the capture ends with exactly one line separator after the last frame.
+* *What it does not establish is anything about the real trace* -- not its frame count, not the class,
+  method, file or line of any frame in it, and not how the converter would render a cause chain, a
+  suppressed exception or a truncated tail, none of which occurs here.
+* *Why that boundary is a limitation and not a hole.* A throwable's frames are captured by the virtual
+  machine when it is constructed, so both generations were handed *identical* frames and only the
+  rendering of them was ever in question -- which is exactly what the diff compares. The fixed frames were
+  used identically on both sides, so the comparison stays a comparison rather than becoming
+  self-fulfilling, and broadening it would mean rendering an environment-dependent trace, which by
+  construction cannot be compared against a committed capture. The code that installs the frames says the
+  same thing at the same length, on `ParityCorpus.newFixedThrowable`.
+
+This does not bend the no-fabricated-event rule recorded above. The script still holds exactly the
+twenty-one events the arms emit and not one more; a fixed trace is an attribute of an event that *was*
+recorded, not an event this project invented.
+
 *Verdict: no remedy is required.* Had the diff been non-empty, the remedy would have been to pin the
 throwable specifier explicitly in the pattern -- and that change would have belonged to the *translated
 configuration file under the module's main resources*, *not* to this corpus directory. This document
@@ -2467,7 +2636,7 @@ equality alone is not.
 | No assertion anywhere is weakened or deleted. This corpus *adds* evidence; it removes none
 
 | Adapt test infrastructure only with documentation
-| Exactly two adaptations exist, and both are documented above with justification
+| Exactly three adaptations exist, and all three are documented above with justification
 
 | Introduce no third-party facade, no vendored superseded code, no routing-around adapter, and no
   dependency change beyond the Log4j 2 generation
@@ -2560,8 +2729,10 @@ formatter covers this file type in this repository.
 
 It names concepts and cites evidence *file paths* from the superseded generation and from the
 compatibility bridge, in prose, because that is the only way to document a migration away from them
-honestly. It contains no import, no compiled reference and no class name in a form any class loader
-could consume -- a prose citation is not a resolvable reference, and this file resolves nothing.
+honestly. It contains no import, no compiled reference and no executable reference of any kind. Dotted
+class names do appear -- counted exactly below -- but every one of them is inert: a prose citation or a
+line of captured output, never something a class loader is asked to resolve. Nothing compiles this file
+and nothing loads from it.
 
 One verification consequence is worth recording, because it is *better* than the licence this document
 was granted. Documentation was permitted to name the superseded namespace in prose, on the
@@ -2576,10 +2747,13 @@ conflate:
   which no class loader would resolve. There are nine such citations, naming seven distinct files, two
   of which are cited twice.
 * The *target* generation's package is a different namespace, and its dotted names *do* appear here --
-  *twelve* times. They occur as quoted `-Dlog4j2.debug` boot output, as the target appender classes the
-  appender-class rows record, in the fully-qualified note that keeps the T6 and T7 rows readable, as one
-  recorded logger name, and as one rendered thread name from a benchmark trial. Those are the classes
-  this migration moves *to*. They are not in scope for any prohibition, and their presence is the point.
+  *thirteen* times, and the enumeration is exhaustive: ten name appenders -- five `FileAppender` and two
+  `AsyncAppender` cells behind the appender-class rows, plus the fully-qualified note that keeps the T6 and
+  T7 rows readable, which spells the deleted `NoOpLog4jAppender` once and its `CountingNoOpAppender`
+  replacement twice, the second inside a quoted `-Dlog4j2.debug` boot line; one is the rendered thread name
+  of a real benchmark trial; one is the logger name quoted in Adaptation 3's negative control; and one is
+  the generated JMH class whose simple name a baseline renders under `+%c{1}+`. Those are the classes this
+  migration moves *to*. They are not in scope for any prohibition, and their presence is the point.
 
 The gate over this module's test tree therefore returns nothing *without* an exclusion, and the
 permitted carve-out was never actually needed.
