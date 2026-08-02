@@ -38,66 +38,43 @@ import org.apache.logging.log4j.core.config.Configurator;
 import org.junit.jupiter.api.Assertions;
 
 /**
- * Shared harness for the behaviour-preservation gates that gate the in-place translation of this module's seven
- * superseded logging configurations into the Log4j 2 schema.
+ * Shared harness for the output-parity gates over this module's seven translated logging configurations.
  * <p>
- * This class exists so that the committed baseline captures and the post-migration captures are produced by
- * <em>identical code</em>. It holds exactly three things and nothing else:
+ * It exists so that a committed baseline and the capture compared against it are produced by <em>identical
+ * code</em>, and it holds only what that requires: the fixed event script parsed from
+ * {@value #EVENT_SCRIPT_RESOURCE} and replayed by {@link #replay(LoggerContext, String)}; the normalizer
+ * {@link #normalize(String)}, which substitutes exactly four rendered elements and never a fifth; and
+ * {@link #startContext(String, String)}, which boots a configuration from its classpath
+ * {@link java.net.URI} and therefore reads, sets and clears <em>no</em> system property — the property lookup is
+ * skipped entirely, which is what lets several configurations boot in one virtual machine without contending
+ * over one global key.
  * </p>
- * <ol>
- *   <li>the <strong>fixed event script</strong>, parsed from the sibling resource {@value #EVENT_SCRIPT_RESOURCE}
- *       and replayed by {@link #replay(LoggerContext, String)}, which supplies a fixed
- *       {@link StackTraceElement} for every event;</li>
- *   <li>the <strong>output normalizer</strong>, {@link #normalize(String)}, which substitutes exactly four
- *       rendered elements and never a fifth;</li>
- *   <li>the <strong>isolated logger-context helper</strong>, {@link #startContext(String, String)}, which boots a
- *       configuration from its classpath {@link java.net.URI} rather than from any system property.</li>
- * </ol>
  * <p>
- * Three cross-cutting contracts follow from those three parts, and each is implemented here rather than in the
- * consuming tests, so that both consumers observe the same behaviour:
+ * Three contracts live here rather than in the consuming tests, so that every consumer observes the same
+ * behaviour. Each event is emitted through a {@link LogBuilder} carrying a fabricated
+ * {@link StackTraceElement} ({@link #fixedLocation(Event)}), because a plain {@code logger.debug(message)} would
+ * resolve the caller-location tokens to a frame inside this harness. The one scripted throwable is given a fixed
+ * trace ({@link #newFixedThrowable(String)}), which would otherwise render environment-dependent frames. And a
+ * destination is removed immediately before the configuration that writes it boots
+ * ({@link #deleteDestination(Path)}), because four fixtures share one file and the default disposition appends.
  * </p>
- * <ul>
- *   <li><strong>Fixed caller identity.</strong> A plain {@code logger.debug(message)} issued from inside this
- *       harness would resolve the caller-location tokens to a frame belonging to this class. Only one fixture
- *       renders caller location, and its committed baseline names the benchmark arm that used to emit the event,
- *       so every event is emitted through a {@link LogBuilder} carrying an explicit, fabricated
- *       {@link StackTraceElement}. See {@link #fixedLocation(Event)}.</li>
- *   <li><strong>Fixed stack trace.</strong> The one scripted event that carries a throwable would otherwise
- *       render an environment-dependent trace. The throwable is therefore given a fixed trace, transcribed from
- *       the committed capture. See {@link #newFixedThrowable(String)}.</li>
- *   <li><strong>Fresh destination.</strong> Four fixtures share one destination file and none of them declares an
- *       append option, whose default appends. A capture is only meaningful when the destination is removed
- *       immediately before the configuration that writes it is booted. See
- *       {@link #deleteDestination(Path)}, {@link #TESTLOG4J_DESTINATION} and {@link #PERFTEST_DESTINATION}.</li>
- * </ul>
  * <p>
- * <strong>The committed script is verified, not merely trusted.</strong> Its records are asserted against
- * {@link #EXPECTED_MANIFEST} on load — configuration id, logger name, level, message text, throwable field and
- * order, entry for entry — and the per-id counts derived from that manifest are asserted too, so a fixture that
- * has drifted from this code fails loudly instead of silently weakening a gate. Every recorded logger name is the
- * name its arm's acquisition site requests, and one of them names a different benchmark than the arm that emitted
- * the event; all are carried character for character, because renaming any of them would move its events onto a
+ * The committed script is verified rather than trusted: on load its records are asserted against
+ * {@link #EXPECTED_MANIFEST} entry for entry — id, logger name, level, message, throwable field and order — and
+ * the per-id counts derived from that manifest are asserted too, so a fixture that drifts from this code fails
+ * loudly instead of silently weakening a gate. Every recorded logger name is the name its arm's acquisition site
+ * <em>resolves</em>, carried character for character, because renaming one would move its events onto a
  * differently configured logger.
  * </p>
  * <p>
- * <strong>What this class deliberately does not do.</strong> It sets, clears and reads <em>no</em> system
- * property: handing a non-null configuration location to the {@link LoggerContext} constructor skips property
- * lookup altogether, which is what lets several configurations boot inside one virtual machine without
- * contending over a single global key. It contains no capture harness, no configuration writer, no documentation
- * generator and no second normalizer; the effective-configuration evidence and the rationale for every
- * translation decision live in the {@code effective-config.adoc} beside the baselines.
- * </p>
- * <p>
- * Every construct used here stays inside this module's own compiled API surface. The peer gate that covers the
- * other module's three configurations was written to the same shape but shares no code with this file: that module
- * compiles at a lower release level and a dependency on this one would close a build cycle, so it embeds its own
- * event constants and its own normalizer, and the two are kept in agreement by review rather than by reuse.
+ * Every construct used here stays within this module's compiled API surface. The peer gate over the other
+ * module's three configurations shares no code with this file: that module compiles at a lower release level and
+ * depending on this one would close a build cycle, so it embeds its own constants and normalizer, and the two are
+ * kept in agreement by review rather than by reuse.
  * </p>
  */
 final class ParityCorpus {
 
-    /** Classpath location of the fixed event script. Grouped by configuration id, in significant order. */
     static final String EVENT_SCRIPT_RESOURCE = "/log4j1-parity/event-script.txt";
 
     /**
@@ -147,10 +124,8 @@ final class ParityCorpus {
      */
     private static final String THROWABLE_FIXTURE_CLASS = "org.apache.logging.log4j.perf.parity.ThrowableParityFixture";
 
-    /** Source file name of the fabricated throwable frames, as rendered by the plain throwable converter. */
     private static final String THROWABLE_FIXTURE_FILE = "ThrowableParityFixture.java";
 
-    /** Simple name of the only exception type the script specifies. Resolved by a closed mapping, not by reflection. */
     private static final String ILLEGAL_STATE_EXCEPTION = "IllegalStateException";
 
     /**
@@ -184,9 +159,18 @@ final class ParityCorpus {
     /** Logger acquired by the plain file-appender benchmark, from a class literal. */
     private static final String FILE_APPENDER_LOGGER = "org.apache.logging.log4j.perf.jmh.FileAppenderBenchmark";
 
-    /** Logger acquired by the parameterizing file-appender benchmark, from a class literal. */
+    /**
+     * Logger acquired by the parameterizing file-appender benchmark, whose acquisition is <em>dynamic</em>.
+     * <p>
+     * That benchmark asks for the class of its own state object rather than naming a class literal, and the object
+     * the benchmark harness instantiates is a generated subclass of the declared state class. The resolved name
+     * therefore lies in the generated subpackage and carries the generated-state suffix, which is why this constant
+     * does too. It is not a cosmetic choice: the committed rendered baseline for this fixture abbreviates this very
+     * name, so recording the declared class instead would put the manifest at odds with the bytes beside it.
+     * </p>
+     */
     private static final String FILE_APPENDER_PARAMS_LOGGER =
-            "org.apache.logging.log4j.perf.jmh.FileAppenderParamsBenchmark";
+            "org.apache.logging.log4j.perf.jmh.jmh_generated.FileAppenderParamsBenchmark_jmhType";
 
     /** Logger acquired by the benchmark that measures a suppressed call, from a class literal. */
     private static final String DEBUG_DISABLED_LOGGER = "org.apache.logging.log4j.perf.jmh.DebugDisabledBenchmark";
@@ -208,21 +192,34 @@ final class ParityCorpus {
             "org.apache.logging.log4j.perf.jmh.FileAppenderThrowableBenchmark";
 
     /**
-     * Logger acquired by the asynchronous throughput-and-latency runner, from a class literal.
+     * Logger acquired by the asynchronous throughput-and-latency runner, from the class of the runner itself.
      * <p>
      * This is the one recorded name outside the benchmark package, because the arm that emitted the event is an
-     * integration-test runner rather than a benchmark.
+     * integration-test runner rather than a benchmark. That runner is instantiated directly and never subclassed,
+     * so its own class is what the acquisition resolves to — no generated name arises here.
      * </p>
      */
     private static final String RUN_LOG4J1_LOGGER = "org.apache.logging.log4j.core.async.perftest.RunLog4j1";
 
-    /** Logger acquired by the asynchronous no-op-appender benchmark, from a class literal. */
+    /**
+     * Logger acquired by the asynchronous no-op-appender benchmark, whose acquisition is <em>dynamic</em>.
+     * <p>
+     * Resolved from the class of the benchmark's own state object, so the recorded name carries the generated
+     * subpackage and suffix, exactly as for the parameterizing file-appender benchmark above. This fixture writes
+     * no file, so no rendered line carries the name and the consuming test asserts it directly instead.
+     * </p>
+     */
     private static final String ASYNC_APPENDER_LOGGER =
-            "org.apache.logging.log4j.perf.jmh.AsyncAppenderLog4j1Benchmark";
+            "org.apache.logging.log4j.perf.jmh.jmh_generated.AsyncAppenderLog4j1Benchmark_jmhType";
 
-    /** Logger acquired by the asynchronous no-op-appender benchmark that also captures location. */
+    /**
+     * Logger acquired by the asynchronous no-op-appender benchmark that also captures location, dynamically.
+     * <p>
+     * Resolved the same way as the two names above, and recorded in the same form.
+     * </p>
+     */
     private static final String ASYNC_APPENDER_LOCATION_LOGGER =
-            "org.apache.logging.log4j.perf.jmh.AsyncAppenderLog4j1LocationBenchmark";
+            "org.apache.logging.log4j.perf.jmh.jmh_generated.AsyncAppenderLog4j1LocationBenchmark_jmhType";
 
     /** The sixteen-character fixed-width message shared by the first arm of each counting fixture. */
     private static final String SIXTEEN_CHARACTER_MESSAGE = "aaaaaaaaaaaaaaaa";
@@ -262,14 +259,9 @@ final class ParityCorpus {
      */
     private static final Map<String, Integer> EXPECTED_EVENT_COUNTS = expectedEventCounts(EXPECTED_MANIFEST);
 
-    /** Immutable, ordered event index, built once from the committed script. */
     private static final Map<String, List<Event>> EVENTS_BY_CONFIG_ID = loadEventScript();
 
     private ParityCorpus() {}
-
-    // -----------------------------------------------------------------------------------------------------------
-    // Part (a) -- the fixed event script
-    // -----------------------------------------------------------------------------------------------------------
 
     /**
      * Returns the scripted events for one configuration id, in the script's own encounter order.
@@ -320,10 +312,10 @@ final class ParityCorpus {
         // T4 -- the only event that carries a throwable, and so the only record with a fifth field.
         manifest.add(record("T4", FILE_APPENDER_THROWABLE_LOGGER, Level.ERROR, "Caught an exception", THROWABLE_SPEC));
 
-        // T5 -- the asynchronous file fixture. Recorded at debug, the level its own arm emits. The peer corpus
-        // records this same runner at info for its own fixtures; the two are deliberately not harmonised, because
-        // each corpus records the level its own arm emitted.
-        manifest.add(record("T5", RUN_LOG4J1_LOGGER, Level.DEBUG, "Short msg"));
+        // T5 -- the asynchronous file fixture. Recorded at info because every emission of the runner this entry is
+        // carried from is at info; the level comes from the same source as the name and the message, never from
+        // whatever the fixture's root level would admit. The peer corpus records the same runner at the same level.
+        manifest.add(record("T5", RUN_LOG4J1_LOGGER, Level.INFO, "Short msg"));
 
         // T6 -- the counting no-op fixture: the fixed-width arm followed by the eleven concatenating arms, in
         // ascending parameter count. Twelve events, matching the twelve annotated arms of the benchmark.
@@ -544,11 +536,6 @@ final class ParityCorpus {
         }
     }
 
-    /**
-     * Verifies the parsed index against the counts derived from the manifest, then freezes it.
-     *
-     * @throws IllegalStateException if any id is missing, unexpected, or carries the wrong number of events
-     */
     private static Map<String, List<Event>> verifyEventCounts(final Map<String, List<Event>> index) {
         for (final Map.Entry<String, List<Event>> group : index.entrySet()) {
             if (!EXPECTED_EVENT_COUNTS.containsKey(group.getKey())) {
@@ -569,10 +556,6 @@ final class ParityCorpus {
         }
         return Collections.unmodifiableMap(frozen);
     }
-
-    // -----------------------------------------------------------------------------------------------------------
-    // Part (a-bis) -- replay, with a fixed caller frame and a fixed stack trace
-    // -----------------------------------------------------------------------------------------------------------
 
     /**
      * Replays one fresh pass of a configuration id's scripted events through the supplied context, in script
@@ -599,10 +582,6 @@ final class ParityCorpus {
         }
     }
 
-    /**
-     * Emits one scripted event with an explicit caller frame and, where the script specifies one, an explicit
-     * throwable carrying a fixed stack trace.
-     */
     private static void emit(final LoggerContext context, final Event event) {
         final Logger logger = context.getLogger(event.loggerName());
         LogBuilder builder = logger.atLevel(event.level()).withLocation(fixedLocation(event));
@@ -629,7 +608,6 @@ final class ParityCorpus {
                 declaringClass, EMITTING_METHOD_NAME, simpleName(declaringClass) + ".java", FIXED_SOURCE_LINE_NUMBER);
     }
 
-    /** Returns the trailing dot-separated part of a name, or the whole name when it carries no dot. */
     private static String simpleName(final String qualifiedName) {
         final int lastDot = qualifiedName.lastIndexOf('.');
         return lastDot < 0 ? qualifiedName : qualifiedName.substring(lastDot + 1);
@@ -686,20 +664,12 @@ final class ParityCorpus {
         };
     }
 
-    // -----------------------------------------------------------------------------------------------------------
-    // Part (b) -- the output normalizer: exactly four tokens, deliberately minimal
-    // -----------------------------------------------------------------------------------------------------------
-
-    /** Replacement for a rendered wall-clock timestamp. */
     private static final String TIMESTAMP_TOKEN = "<TS>";
 
-    /** Replacement for a rendered thread name, brackets retained. */
     private static final String THREAD_TOKEN = "[<THREAD>]";
 
-    /** Replacement for a rendered source line number, the preceding colon retained. */
     private static final String LINE_TOKEN = ":<LINE>";
 
-    /** Replacement for a rendered absolute filesystem path. */
     private static final String PATH_TOKEN = "<PATH>";
 
     /**
@@ -734,31 +704,22 @@ final class ParityCorpus {
     /**
      * Normalizes rendered output so that a capture can be compared with a committed baseline.
      * <p>
-     * Exactly four rendered elements are substituted, and no fifth may ever be added:
-     * </p>
-     * <ol>
-     *   <li>the timestamp, which is wall-clock;</li>
-     *   <li>the thread name, which is assigned by whatever ran the emission — always the <em>producing</em>
-     *       thread, because both generations record it into the event when the event is constructed, so an
-     *       asynchronous fixture renders the emitter and never the dispatcher;</li>
-     *   <li>the source line number, which is an artefact of the editing this migration performs; the class and
-     *       method components rendered beside it are <em>not</em> normalized;</li>
-     *   <li>absolute filesystem paths, which are workspace-dependent.</li>
-     * </ol>
-     * <p>
-     * <strong>Everything else is compared byte for byte</strong>: the level text and its padding width, the
-     * logger-name abbreviation, the method name, every literal separator, the rendering of an absent context-map
-     * key — which renders as nothing and therefore produces byte-significant double spaces and one significant
-     * trailing space — and the full rendering of a throwable, tab-indented frames included. Nothing is trimmed,
-     * no run of spaces is collapsed and no line separator is rewritten: the captures and the baselines are both
-     * produced on the project's documented build baseline, so a line-separator token would be a fifth token and
-     * is forbidden.
+     * Exactly four rendered elements are substituted, and no fifth may ever be added: the wall-clock timestamp,
+     * the thread name, the source line number — an artefact of the editing this migration performs, whose
+     * neighbouring class and method components are <em>not</em> normalized — and workspace-dependent absolute
+     * paths.
      * </p>
      * <p>
-     * The function is pure and idempotent: it holds no state, so it is safe under forked, randomly ordered
-     * execution, and normalizing an already-normalized baseline returns it unchanged. Lines are split and rejoined
-     * on the line-feed character with a negative limit, so the presence or absence of a final newline — the
-     * evidence that settles whether the implicit throwable converter adds one — survives intact.
+     * <strong>Everything else is compared byte for byte</strong>, including level padding, logger-name
+     * abbreviation, every literal separator, the double space and single trailing space an absent context-map key
+     * leaves behind, and a throwable's tab-indented frames. Nothing is trimmed, no run of spaces is collapsed and
+     * no line separator is rewritten; a line-separator token would be a fifth token and is forbidden. Lines are
+     * split and rejoined on the line feed with a negative limit, so the presence or absence of a final newline
+     * survives intact — that is the evidence settling whether the implicit throwable converter adds one.
+     * </p>
+     * <p>
+     * The function is pure and idempotent, so it is safe under forked, randomly ordered execution and normalizing
+     * an already-normalized baseline returns it unchanged.
      * </p>
      *
      * @param rendered captured or baseline text, never {@code null}
@@ -822,7 +783,6 @@ final class ParityCorpus {
         return input.substring(0, matcher.start()) + replacement + input.substring(matcher.end());
     }
 
-    /** Replaces every match of a pattern by index surgery, scanning left to right without rescanning a token. */
     private static String replaceAll(final String input, final Pattern pattern, final String replacement) {
         final Matcher matcher = pattern.matcher(input);
         if (!matcher.find()) {
@@ -838,11 +798,6 @@ final class ParityCorpus {
         return result.toString();
     }
 
-    // -----------------------------------------------------------------------------------------------------------
-    // Part (c) -- the isolated logger-context helper
-    // -----------------------------------------------------------------------------------------------------------
-
-    /** Prefix of the context name given to each booted fixture, so no two fixtures share a context identity. */
     private static final String CONTEXT_NAME_PREFIX = "parity-";
 
     /**
@@ -850,20 +805,15 @@ final class ParityCorpus {
      * <p>
      * <strong>Handing a non-null configuration location to the constructor is mandatory, not stylistic.</strong>
      * The configuration factory guards its entire system-property-reading block on the location being absent, so a
-     * non-null location makes the context property-independent by construction: no configuration-file property of
-     * any generation is consulted. That is what lets several fixtures boot inside one virtual machine, under
-     * forked and randomly ordered execution, without contending over a single global key — and it is why this
-     * harness sets, clears and reads no system property at all. In particular it never enables status-logger
-     * debugging: that evidence belongs to the effective-configuration document beside the baselines, and enabling
-     * it here would alter the status output of everything else sharing the machine.
+     * non-null location makes the context property-independent by construction, which is what lets several
+     * fixtures boot inside one virtual machine, under forked and randomly ordered execution, without contending
+     * over a single global key.
      * </p>
      * <p>
-     * The returned context is started and is the caller's to close. Prefer a try-with-resources block, since the
-     * context is auto-closeable and closing it stops it; a caller that keeps the reference may instead stop it
-     * with the null-safe shutdown helper in a teardown. Both funnel to the same stop, and stopping is what drains
-     * an asynchronous appender's queue and flushes a buffered writer, so it must happen before the capture is
-     * read. If the boot itself fails, the partially started context is stopped here rather than left running,
-     * because a context that was never published cannot be closed by anyone else.
+     * The returned context is started and is the caller's to close. Stopping it is what drains an asynchronous
+     * appender's queue and flushes a buffered writer, so it must happen before the capture is read. If the boot
+     * itself fails the partially started context is stopped here, because a context that was never published
+     * cannot be closed by anyone else.
      * </p>
      *
      * @param configId the configuration id, used to name the context
@@ -888,10 +838,6 @@ final class ParityCorpus {
         }
         return starting;
     }
-
-    // -----------------------------------------------------------------------------------------------------------
-    // Reading captures and baselines, and the fresh-destination contract
-    // -----------------------------------------------------------------------------------------------------------
 
     /**
      * Reads a classpath resource as text.
@@ -953,10 +899,6 @@ final class ParityCorpus {
         return Files.deleteIfExists(destination);
     }
 
-    /**
-     * One scripted event: an immutable value carrying the four mandatory fields of a script data line plus the
-     * optional throwable specification.
-     */
     static final class Event {
 
         private final String configId;
@@ -982,7 +924,6 @@ final class ParityCorpus {
             this.throwableSpec = throwableSpec;
         }
 
-        /** Configuration id this event belongs to, {@code T1} through {@code T7}. */
         String configId() {
             return configId;
         }
@@ -990,7 +931,8 @@ final class ParityCorpus {
         /**
          * Logger name, carried character for character from the script.
          * <p>
-         * Every recorded name is the name its arm's acquisition site requests, and one of them names a different
+         * Every recorded name is the name its arm's acquisition site resolves, which for the three arms that ask
+         * for the class of their own state object is the generated state subclass. One name identifies a different
          * benchmark than the arm that emitted the event. None may be "corrected": the name is the logger's
          * identity, and therefore its configured level and appender wiring.
          * </p>
@@ -999,7 +941,6 @@ final class ParityCorpus {
             return loggerName;
         }
 
-        /** Level the event is emitted at, exactly as scripted. */
         Level level() {
             return level;
         }
@@ -1017,10 +958,6 @@ final class ParityCorpus {
             return message;
         }
 
-        /**
-         * Optional throwable specification, of the form {@code SimpleName:message}, or {@code null} when the
-         * event carries no throwable.
-         */
         String throwableSpec() {
             return throwableSpec;
         }

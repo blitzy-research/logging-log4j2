@@ -168,6 +168,20 @@ Everything outside those four tokens is compared byte for byte: level text *and 
 logger-name abbreviation, every literal separator, context-map placeholder rendering, and throwable
 rendering.
 
+*Normalization is line-aware, not a sequence of global replacements,* and that distinction is
+load-bearing rather than stylistic. A timestamp is recognised only where a rendered event actually
+begins one, at the start of a line; the thread and source-line substitutions are applied at most once
+per line, and only on a line that carries a timestamp. The reason is that two of the four regions are
+not unambiguous in isolation -- a thread name renders inside square brackets, and a message may itself
+contain a bracketed group, so replacing that pattern globally would rewrite message text, and a
+timestamp-shaped substring inside a message would be rewritten as though it were an event's own.
+Absolute paths carry no such ambiguity and are replaced throughout, which is what lets a stack-trace
+continuation line be normalized without being mistaken for an event. Line structure is preserved
+exactly, so whether a capture ends with a line separator survives untouched, and every substitution is
+idempotent, which is what makes it safe to normalize a committed baseline as well as a capture. This is
+the same algorithm the sibling module's corpus applies, expressed against the API surface this module
+compiles to, with the same four patterns and the same four replacement tokens character for character.
+
 Two whitespace consequences are load-bearing and are called out here because they look like
 formatting noise and are not:
 
@@ -279,14 +293,15 @@ converted to `{}` parameterisation, so the recorded message is the concatenated 
 T10's `INFO` level likewise comes from their consumer, whose three emissions are all at `INFO`, and
 the message is that consumer's own latency-message constant.
 
-The sibling `log4j-perf-test` corpus carries one entry naming that very same consumer class, and it
-records that entry at `DEBUG` rather than `INFO`. *The two corpora deliberately differ here, and must
-not be harmonised.* Each records the level of the arm it actually captured: this module's T9 and T10
-were captured from the runner's own latency loop, which emits at `INFO`, while the sibling's entry was
-captured from the arm that drives its own copy of the asynchronous fixture, which emits at `DEBUG`.
-Both fixtures declare a `debug` root, so both levels are admitted and each capture is the faithful
-record of its own arm. Rewriting either corpus to match the other would substitute a level no capture
-evidences for one that a capture does, which is precisely the drift these gates exist to prevent.
+The sibling `log4j-perf-test` corpus carries one entry naming that very same consumer class, for its own
+copy of the asynchronous fixture, and it records that entry at `INFO` too. *The two corpora agree, as two
+records of one real emission must.* Neither level was chosen to match a root level: every one of that
+consumer's three emissions is at `INFO`, so `INFO` is the only level either corpus may record for it, and
+both fixtures declare a `debug` root that admits it. The two committed captures are byte-identical in
+consequence -- 43 bytes each, `+<TS> INFO RunLog4j1 [<THREAD>]  Short msg +` including the significant
+trailing space -- and that cross-corpus identity is itself a check: a divergence between them would mean
+one of the two had substituted a level no capture evidences for one that a capture does, which is
+precisely the drift these gates exist to prevent.
 
 === The `+%5p+` field width, and how it is verified without an invented event
 

@@ -26,8 +26,9 @@ Each translated fixture contributes two things:
 * a *normalized baseline capture* recording exactly what the superseded configuration rendered
   before the migration, and
 * an *effective-configuration table* in this document, whose Log4j 2 column is populated from
-  status-logger output observed while booting the translated file with `-Dlog4j2.debug` -- never from
-  reading the translated XML.
+  status-logger output observed while booting the translated file with `-Dlog4j2.debug`, and from
+  interrogating the objects that running configuration actually built -- never from reading the
+  translated XML.
 
 Acceptance for every fixture is an *empty* normalized diff between its baseline capture and the
 output the migrated configuration renders for the same event script.
@@ -68,12 +69,40 @@ Each corpus is therefore self-contained, and neither reads the other's payload f
 
 Nothing here is a build-file change. `src/test/resources` is a default Maven resource location and
 needs no declaration. The module build file carries the edits that enable the comparison tests which
-consume this corpus -- the superseded compile dependency is gone, the test-skip property is gone,
-test-scope dependencies on `log4j-core-test` and JUnit Jupiter are declared versionless, and the
-`default-test` execution overrides the inherited test toolchain pin with
-`+<jdkToolchain><version>${surefire.jdkToolchain}</version></jdkToolchain>+` -- but that file belongs
-to its own owner and is mentioned here only as context. This directory contains exactly eight files
-and no ninth.
+consume this corpus -- but that file belongs to its own owner and is recorded here only as the context
+that makes the tests runnable at all.
+
+.The four build-file conditions these tests depend on
+[cols="2,4",options="header"]
+|===
+| Condition | Why it is required
+
+| the superseded compile dependency `log4j:log4j` is *removed* from
+  `log4j-perf-test/pom.xml`
+| it is the artefact this migration exists to eliminate; while it remained on the compile classpath a
+  translated arm could still resolve the superseded facade
+
+| `+<maven.test.skip>true</maven.test.skip>+` is *removed*
+| the module previously ran no tests and had no `src/test` tree at all, so without this removal the
+  mandated comparison tests could exist but never execute
+
+| test-scope dependencies on `log4j-core-test` and on JUnit Jupiter
+  (`junit-jupiter-api`, `junit-jupiter-engine`) are declared *versionless*
+| the versions are managed by the JUnit BOM the parent imports, so declaring them here would risk
+  divergence from the rest of the reactor
+
+| the surefire `default-test` execution overrides the inherited toolchain pin with
+  `+<jdkToolchain><version>${surefire.jdkToolchain}</version></jdkToolchain>+`
+| this module compiles at `+<maven.compiler.release>9</maven.compiler.release>+`, while the parent's
+  `java8-tests` profile -- activated automatically whenever `env.CI` is `true` -- pins the same
+  execution to `+<version>[1.8, 9)</version>+`. Under that pin these tests would be loaded by a Java 8
+  toolchain and fail at class-load time. The module's own `+<surefire.jdkToolchain>[9, )+` property had
+  no consumer before this change; the override is what finally gives it one
+|===
+
+Two API-surface consequences follow from that release level and are honoured by the consuming tests:
+nothing in them uses a construct newer than Java 9, and the peer module's own gate is written to the
+lower surface its module compiles against. This directory contains exactly eight files and no ninth.
 
 *State of the consuming tests.* The corpus is complete and self-sufficient, and the three Java
 classes that read it now exist in
@@ -143,10 +172,18 @@ That directive dictates the *method*, not merely the goal.
 
 [IMPORTANT]
 ====
-The Log4j 2 column of every table below was populated from *observed status-logger output*, never
-from reading the translated XML. Transcribing the XML into the table would make the table circular
-and worthless: it would prove only that the file says what it says, not that Log4j 2 builds what the
-superseded generation built.
+The Log4j 2 column of every table below was populated from *observed status-logger output* and from
+*interrogating the running configuration through its public accessors*, never from reading the
+translated XML. Transcribing the XML into the table would make the table circular and worthless: it
+would prove only that the file says what it says, not that Log4j 2 builds what the superseded
+generation built.
+
+Both channels are used because neither alone covers every row. The builder traces the status logger
+emits carry the attribute values the plugin builders received -- which is where the level, additivity
+and appender-reference rows come from -- while values a builder resolves to a default, such as a file
+manager's buffer size or an asynchronous wrapper's resolved reference list, are visible only on the
+built object. Every row below states which of the two it came from, and no row is transcribed from a
+translated attribute.
 ====
 
 The property is real and supported. `log4j-api/src/main/java/org/apache/logging/log4j/status/StatusLogger.java`
@@ -373,7 +410,7 @@ Observed rather than argued. Emitting T5's single event from a thread deliberate
 `parity-producer`, through the *migrated* asynchronous translation, rendered:
 
 ----
-<TS> DEBUG RunLog4j1 [parity-producer]  Short msg[SP]
+<TS> INFO RunLog4j1 [parity-producer]  Short msg[SP]
 ----
 
 The producer's name is in the output; no dispatcher name appears anywhere in it. A benchmark trial
@@ -509,13 +546,13 @@ its Log4j 2-observed value side by side, with a verdict. Appenders are always re
 
 === Parity result
 
-T1's committed baseline is three lines, one per benchmark-derived debug event -- 228 bytes in total:
+T1's committed baseline is three lines, one per benchmark-derived debug event -- 244 bytes in total:
 
 [source,text]
 ----
 <TS> DEBUG [<THREAD>] FileAppenderBenchmark  - This is a debug message
-<TS> DEBUG [<THREAD>] FileAppenderParamsBenchmark  - This is a debug [1] message
-<TS> DEBUG [<THREAD>] FileAppenderParamsBenchmark  - Val1=2, val2=1, val3=1
+<TS> DEBUG [<THREAD>] FileAppenderParamsBenchmark_jmhType  - This is a debug [1] message
+<TS> DEBUG [<THREAD>] FileAppenderParamsBenchmark_jmhType  - Val1=2, val2=1, val3=1
 ----
 
 One feature of those bytes is load-bearing and must not be tidied: the doubled space before each ` - `
@@ -639,9 +676,14 @@ asserts against the started configuration that: the configuration was built by t
 configuration class rather than by a fallback; it reached its started state; the root logger's level is
 `ERROR` and its additivity is `true`; the root declares exactly one appender reference, which resolves;
 the referenced appender is named `TestLogfile`, is a started file appender, and writes
-`target/testlog4j.log` with immediate flush disabled; and its configured conversion pattern is
+`target/testlog4j.log` with immediate flush disabled, appending rather than truncating, through a manager
+whose buffer size is the default this document records; and its configured conversion pattern is
 character-for-character the pattern T1 carries. It then asserts that both the committed baseline and the
 produced file are *zero bytes*, so that restoring output in either place fails by name.
+
+That enumeration is complete: it is exactly the set of assertions the consuming test makes for this
+fixture, with no status-event assertion among them, because the absence of warning and error status is
+established by the `-Dlog4j2.debug` boot recorded in this document rather than by the parity gate.
 
 That pattern assertion is not decoration -- it is how both T1 and T2 obtain their field-width evidence.
 Neither fixture replays a level shorter than five characters, so no replayed event can exercise the
@@ -963,7 +1005,7 @@ producing exactly twelve. There is no rendered-text baseline for T6, and there s
 differently named logger yields the same count, so T6's comparison test must also assert its logger
 identity directly -- it is one of the three dynamic acquisitions, and the rendered channel that protects
 the other names is unavailable here. See
-the section *Three names are dynamic, and recording the base class instead was a provenance error*.
+the section *The three dynamic acquisitions, and the resolved names this corpus records*.
 The recorded numbers themselves, their capture procedure and the fixture's format contract are
 documented under the section *The custom-component count baseline*.
 
@@ -1081,8 +1123,8 @@ why the number is recorded as a value rather than as a capture file -- and why a
 must never be substituted for it.
 
 One thing a count cannot see is *which logger* the events travelled through, which is exactly why the
-identity assertion in the section *Three names are dynamic, and recording the base class instead was a
-provenance error* is part of this component's contract rather than an optional extra.
+identity assertion in the section *The three dynamic acquisitions, and the resolved names this corpus
+records* is part of this component's contract rather than an optional extra.
 
 === The two configurations
 
@@ -1511,9 +1553,8 @@ recorded with its justification, not with a convenience rationale.
 this module's benchmark source root -- `DebugDisabledBenchmark`, `LoggingDisabledBenchmark`,
 `FileAppenderBenchmark`, `FileAppenderParamsBenchmark`, `FileAppenderWithLocationBenchmark` and
 `FileAppenderThrowableBenchmark` -- and all six carry the adaptation today. The seventh is
-`PerformanceComparison`, the three-generation comparison class in the integration-test module, whose own
-migration is a *later operation* of this change and which therefore still stands on the superseded
-facade at this milestone. It is recorded here because this section is the migration's single designated
+`PerformanceComparison`, the three-generation comparison class in the integration-test module, which
+carries it today as well. It is recorded here because this section is the migration's single designated
 home for adaptation prose; splitting it across corpora would leave the count wrong in both. Its own
 specifics are set out under "`The seventh class`" below.
 
@@ -1525,16 +1566,16 @@ so the name they ask the isolated context for is the benchmark class itself -- i
 oddity is preserved rather than corrected.
 
 `FileAppenderParamsBenchmark` is the case worth stating, because it names its logger from `getClass()`
-rather than from a class literal. Under a real benchmark trial the harness instantiates a *generated
-subclass* of the state class, in a generated package, so `getClass().getName()` resolves there to
+rather than from a class literal. The harness instantiates a *generated subclass* of the state class, in a
+generated package, so `getClass().getName()` resolves to
 `+<benchmark package>.jmh_generated.FileAppenderParamsBenchmark_jmhType+`. T6's and T7's asynchronous arms
 acquire the same way.
 
-*The corpus records the acquisition-site name -- the benchmark class itself -- and not that generated
-form.* The reasoning is set out under
-the section *Why the generated harness names are not what this corpus records*; in short, the generated
-suffix is produced by the benchmark harness's code generation, in which neither logging generation
-participates, so it carries no parity information, and no parity replay can ever derive it.
+*The corpus records the name the acquisition site resolves, which for these three is that generated
+form.* The evidence is set out under
+the section *The three dynamic acquisitions, and the resolved names this corpus records*; in short it was
+read back from the generated state classes themselves and confirmed against the bytes a real trial
+renders, so recording the bare class name would put T1's baseline at odds with its own fixture.
 
 ==== Why a property rename would not have been enough
 
@@ -1643,14 +1684,14 @@ adaptation for the same reason, and two details make it worth recording rather t
 into the list of six.
 
 [IMPORTANT]
-.Status at this milestone
+.Status
 ====
-That class is *not* part of the processed set this document reports on: it is a later operation of the
-migration and stands at its pre-migration state here, still acquiring one of its three loggers through
-the superseded facade. What follows is therefore the *contract* for its adaptation -- the shape it takes
-when that operation lands -- rather than an observation of the current tree. Everything this corpus
-records *about* it that is already true today is separate and unaffected: the logger-name identity of
-its three arms, the rendered lines its name appears in, and the CI-selection caveat below.
+That class *has* taken the adaptation: it carries no reference to the superseded facade, acquires its
+migrated arm from an isolated `LoggerContext` held in a static field, and gives all three of its arms the
+identical logger name. What follows is therefore an observation of the current tree, not a forward
+contract. It remains outside the processed set this document's fixture tables report on, because it
+selects none of this module's seven configurations; it is recorded here because this section is the
+migration's single designated home for adaptation prose.
 ====
 
 *It is the class where the shared-logger-name rule is load-bearing.* It acquires three loggers, one per
@@ -2058,10 +2099,10 @@ Two places where it shows:
 ----
 +
 The same effect on T1's other two lines, whose arm acquires its logger through `getClass()` and whose
-recorded name is therefore the acquisition site's own class:
+recorded name is therefore the generated state subclass that expression resolves to:
 +
 ----
-<TS> DEBUG [<THREAD>] FileAppenderParamsBenchmark  - This is a debug [1] message
+<TS> DEBUG [<THREAD>] FileAppenderParamsBenchmark_jmhType  - This is a debug [1] message
 ----
 +
 and, for T3, with the location component in place of the logger name:
@@ -2075,7 +2116,7 @@ and, for T3, with the location component in place of the logger name:
   *significant trailing space*:
 +
 ----
-<TS> DEBUG RunLog4j1 [<THREAD>]  Short msg[SP]
+<TS> INFO RunLog4j1 [<THREAD>]  Short msg[SP]
 ----
 +
 where `[SP]` stands for *one literal space byte* immediately before the newline. It is written as a
@@ -2301,33 +2342,35 @@ was carried over character for character. Two of them look wrong and *must survi
   with it the level and the appender wiring its events resolve against. It is preserved verbatim.
 * `PerformanceComparison`, in the sibling integration-test module, deliberately gives *three* logging
   generations the *same* logger name, so that the arms remain comparable. That identity is preserved
-  too. This is the same class that takes the seventh isolated-context adaptation when its own operation
-  lands; see "`The seventh class`" above, where that contract and the class's status at this milestone
-  are recorded.
+  too. This is the same class that takes the seventh isolated-context adaptation; see
+  "`The seventh class`" above, where its adaptation and its CI-selection caveat are recorded.
 
-==== Why the generated harness names are not what this corpus records
+==== The three dynamic acquisitions, and the resolved names this corpus records
 
 Three of these arms do not name their logger from a class literal. They ask for a logger named after
-"`the class of this object`", and under a real benchmark trial the object is not an instance of the
-benchmark class: the harness generates a subclass of every state class, in a generated package, and
-instantiates *that* through three intermediate padding classes, so a real trial's rendered `+%c{1}+`
-carries the generated form `+<benchmark package>.jmh_generated.<BenchmarkSimpleName>_jmhType+`.
+"`the class of this object`", and the object is not an instance of the benchmark class: the harness
+generates a subclass of every state class, in a generated package, and instantiates *that*, so the
+expression resolves to `+<benchmark package>.jmh_generated.<BenchmarkSimpleName>_jmhType+`.
 
-*The corpus records the acquisition site's own class in all three cases,* not the generated form. Three
-independent reasons make that the only defensible choice, and each of them stands alone:
+*The corpus records the name each acquisition site resolves,* which for these three is the generated
+form. The rule is uniform across the whole corpus and across both modules -- record what the site
+resolves, never what its source appears to declare -- and it is settled by observation rather than by
+argument:
 
-* *The generated suffix carries no parity information.* It is produced by the benchmark harness's
-  annotation processor. Neither logging generation participates in producing it, neither can alter it, and
-  it is identical before and after this migration *by construction*. A corpus whose purpose is to detect
-  what the migration changed has nothing to learn from a name the migration cannot touch.
-* *No parity replay can derive it.* The replay is not a benchmark trial: no state class is instantiated
-  and no generated subclass exists in the test run. A generated name in the script could therefore only
-  ever be reproduced because the script spells it out literally and the harness emits that string -- which
-  makes the capture a restatement of the script rather than evidence about a rendering. That is circular,
-  and it is the defect this section replaces.
-* *It would put the two corpora into disagreement.* The peer `log4j-core-test` corpus records the
-  acquisition-site name for the very same kind of arm. Two corpora recording different names for the same
-  expression would leave neither able to arbitrate.
+* *It is what the arms actually do.* Instantiating the generated state classes from this module's own
+  `+target/classes+`, calling their setup methods and reading back the acquired logger yields
+  `+…jmh_generated.FileAppenderParamsBenchmark_jmhType+`,
+  `+…jmh_generated.AsyncAppenderLog4j1Benchmark_jmhType+` and
+  `+…jmh_generated.AsyncAppenderLog4j1LocationBenchmark_jmhType+`. The migrated source says so too: the
+  comment above the params arm's acquisition records that the harness subclasses the state class, so
+  `getClass()` rather than a class literal is what keeps the events on the logger they have always used.
+* *It is what the fixture renders.* A real trial of the params arm, captured from
+  `+target/testlog4j.log+`, renders `+FileAppenderParamsBenchmark_jmhType+` under `+%c{1}+`. Recording the
+  bare class name would have made T1's baseline disagree with the bytes the arm produces -- which is the
+  one thing a rendered-output oracle may never do.
+* *It keeps the two corpora in agreement.* The peer `log4j-core-test` corpus records `RunLog4j1`, whose
+  acquisition is *also* dynamic; that class is simply never subclassed, so the same rule resolves it to
+  itself. Both corpora therefore apply one rule and reach the right answer in each case.
 
 [cols="2,1,3",options="header"]
 |===
@@ -2340,28 +2383,28 @@ independent reasons make that the only defensible choice, and each of them stand
 
 | `FileAppenderParamsBenchmark` (T1 events 2 and 3)
 | dynamic
-| The recorded name is `+org.apache.logging.log4j.perf.jmh.FileAppenderParamsBenchmark+`, and T1's
-  baseline accordingly renders `+FileAppenderParamsBenchmark+` under `+%c{1}+`
+| The recorded name is
+  `+org.apache.logging.log4j.perf.jmh.jmh_generated.FileAppenderParamsBenchmark_jmhType+`, and T1's
+  baseline accordingly renders `+FileAppenderParamsBenchmark_jmhType+` under `+%c{1}+`
 
 | `AsyncAppenderLog4j1Benchmark` (T6), `AsyncAppenderLog4j1LocationBenchmark` (T7)
 | dynamic
-| The recorded names are the two benchmark classes' own. Neither fixture renders any text, so the name
-  affects nothing that is compared there; it is recorded for provenance
+| The recorded names are the two generated state subclasses. Neither fixture renders any text, so the
+  identity has to be asserted directly rather than through a capture
 |===
 
-*What still guards the acquisition expression.* The worry that motivated recording the generated form --
-that someone might "`tidy`" a `getClass()` acquisition into a class literal without the corpus noticing --
-is real, and it is guarded at the *source* level, where it belongs: every acquisition argument in this
-migration is carried over character for character, and that is verified against the arms themselves. It
-is not guarded by asserting a runtime name that the gate can never independently produce, because such an
-assertion cannot fail for the right reason.
+*What guards the acquisition expression.* That someone might "`tidy`" a `getClass()` acquisition into a
+class literal is a real risk, and it is guarded twice. At the *source* level every acquisition argument in
+this migration is carried over character for character, verified against the arms themselves. And in the
+*corpus*, a tidied acquisition would resolve to the bare class name and immediately diverge from T1's
+committed baseline and from the two recorded identities.
 
-*For T6 and T7 the rendered channel is unavailable, so the identity must be asserted directly.* A count
-is blind to the logger name: replaying the same number of events through a differently named logger
-yields the same count. The consuming comparison test must therefore, for each of the two count-only
-fixtures, assert that the recorded logger name lies in the generated subpackage and carries the
-generated-state suffix, and assert that the benchmark's acquisition is dynamic rather than a class
-literal. Count equality plus that assertion is the complete contract; count equality alone is not.
+*For T6 and T7 the rendered channel is unavailable, so the identity is asserted directly.* A count is
+blind to the logger name: replaying the same number of events through a differently named logger yields
+the same count. For each of the two count-only fixtures the consuming comparison test therefore asserts
+the exact resolved logger name -- generated subpackage and generated-state suffix included -- alongside
+the level, for every scripted event. Count equality plus that assertion is the complete contract; count
+equality alone is not.
 
 === Other preservation directives, and how each is honoured
 
@@ -2434,7 +2477,7 @@ This directory holds *exactly eight files and nothing else*:
   on T2, one each on T3, T4 and T5, twelve on T6 and one on T7 -- and no control, probe or otherwise
   invented event. The peer corpus keeps its own script, in its own module; see "`Scope of this document`"
 | `log4j12-perf.baseline.txt` | T1's normalized rendered baseline, three lines, one per replayed debug
-  event -- 228 bytes
+  event -- 244 bytes
 | `log4j12-perf2.baseline.txt` | T2's baseline, *byte-empty*: both replayed debug events are suppressed by
   its `error` root and contribute nothing. Emptiness alone proves little, so the consuming test pairs it
   with structural assertions made while the fixture is started -- that is the other half of the evidence
@@ -2443,8 +2486,10 @@ This directory holds *exactly eight files and nothing else*:
 | `log4j12-perf-file-throwable.baseline.txt` | T4's baseline, four lines including two frames
 | `perf-log4j12-async.baseline.txt` | T5's baseline, one line, with a significant trailing space
 | `noOpAppender.count.baseline.txt` | the recorded event counts for T6 and T7 -- *pure payload*, exactly
-  two data lines and nothing else. Its rationale lives in this document, under
-  the section *The custom-component count baseline*
+  two data lines and nothing else. That form is not merely documented: the consuming test asserts the
+  file's *raw bytes* against the two expected records, each terminated by one line separator, so an
+  inserted comment, a blank line, a missing final separator or a surplus one fails by name. Its rationale
+  lives in this document, under the section *The custom-component count baseline*
 | `effective-config.adoc` | this document
 |===
 

@@ -22,6 +22,7 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.io.IOException;
 import java.net.URISyntaxException;
 import java.util.ArrayList;
 import java.util.List;
@@ -38,72 +39,59 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * Comparison gate for the one custom logging component this module used to carry: a no-op appender that did nothing
- * but count the events handed to it. Its replacement is {@link CountingNoOpAppender}, a plugin Core already ships,
- * and this class proves the replacement receives exactly the events the superseded component was recorded receiving.
+ * Comparison gate for the custom counting no-op appender of the two asynchronous fixtures, now bound to
+ * {@link CountingNoOpAppender}: it asserts that the appender receives exactly the number of events recorded in the
+ * committed baseline.
  * <p>
- * <strong>Count identity is output identity for this component.</strong> A counting no-op appender renders nothing:
- * both fixtures declare no layout at all and the replacement's factory hard-codes a null layout, so there is no
- * rendered text to diff and no conversion token to audit. The byte-identity criterion that would apply to a
- * component producing text has no subject here, because no custom layout or filter survives outside the retained
- * compatibility artifact.
+ * <strong>Count identity is output identity for this component.</strong> A counting no-op appender renders nothing —
+ * both fixtures declare no layout and the plugin's factory hard-codes a null layout — so there is no rendered text
+ * to diff and no conversion token to audit, and the byte-identity criterion that applies to a component producing
+ * text has no subject here.
  * </p>
  * <p>
- * Both fixtures are gated, because they differ in the one dimension that changes what the component observes: one
- * captures caller location on its asynchronous wrapper and the other does not. Each is an independent case with its
- * own isolated context, and the counts come from the committed baseline in the parity corpus rather than from
- * literals in this code. The effective-configuration evidence, and the record of the test-infrastructure
- * adaptations this migration made, live in the {@code effective-config.adoc} beside that baseline.
+ * Both fixtures are gated because they differ in the one dimension that changes what the appender observes: whether
+ * their asynchronous wrapper captures caller location. Each is an independent case with its own isolated context,
+ * and the expected counts come from the committed baseline rather than from literals in this code.
  * </p>
  */
 class NoOpAppenderCountParityTest {
 
     /**
-     * Classpath location of the recorded counts.
-     * <p>
-     * The capture behind this file cannot be retaken in this tree: the counter it was read from ceased to exist when
-     * the superseded component was deleted, so retaking it would mean returning to the commit that still carried
-     * that component. The file is therefore an oracle, never a knob.
-     * </p>
+     * Classpath location of the recorded counts, which are the authoritative oracle for both fixtures. A count that
+     * does not match is a defect in the migration and must never be adjusted here to make the comparison pass.
      */
     private static final String COUNT_BASELINE_RESOURCE = "/log4j1-parity/noOpAppender.count.baseline.txt";
 
     /**
-     * Name both fixtures bind the counting appender to.
-     * <p>
-     * It is deliberately not the name used by the Log4j 2 peer fixtures sitting in the same directory. This name was
-     * carried over character for character from the configurations being translated, along with the appender
-     * reference that selects it, so that the translation changes the schema and nothing else.
-     * </p>
+     * Name both fixtures bind the counting appender to, character for character. It is deliberately <em>not</em> the
+     * name the Log4j 2 peer fixtures in the same directory use, so the two must not be conflated.
      */
     private static final String COUNTING_APPENDER_NAME = "NoOp";
 
-    /** Configuration id of the asynchronous no-op fixture that does <em>not</em> capture caller location. */
     private static final String NO_LOCATION_CONFIG_ID = "T6";
 
-    /** Classpath location of that fixture. Its name and location are unchanged by the translation. */
     private static final String NO_LOCATION_CONFIG_RESOURCE = "/perf-log4j12-async-noOpAppender.xml";
 
-    /** Configuration id of the asynchronous no-op fixture that <em>does</em> capture caller location. */
     private static final String LOCATION_CONFIG_ID = "T7";
 
-    /** Classpath location of that fixture. Its name and location are unchanged by the translation. */
     private static final String LOCATION_CONFIG_RESOURCE = "/perf-log4j12-async-location-noOpAppender.xml";
 
     /**
      * Logger name every event scripted for the fixture without location capture carries.
      * <p>
      * Stated here rather than read from the script, so that the identity assertion below is an independent
-     * expectation and not a restatement of the value it checks. It is the acquisition-site name of the benchmark
-     * that selects this fixture, carried character for character.
+     * expectation and not a restatement of the value it checks. The benchmark that selects this fixture acquires its
+     * logger from the class of its own state object, and the harness instantiates a generated subclass of that
+     * state class, so the name resolved at runtime lies in the generated subpackage and carries the generated-state
+     * suffix. That resolved name is what this fixture's events are emitted under, and it is what is pinned here.
      * </p>
      */
     private static final String NO_LOCATION_LOGGER_NAME =
-            "org.apache.logging.log4j.perf.jmh.AsyncAppenderLog4j1Benchmark";
+            "org.apache.logging.log4j.perf.jmh.jmh_generated.AsyncAppenderLog4j1Benchmark_jmhType";
 
-    /** Logger name every event scripted for the location-capturing fixture carries, stated independently. */
+    /** Logger name every event scripted for the location-capturing fixture carries, resolved the same way. */
     private static final String LOCATION_LOGGER_NAME =
-            "org.apache.logging.log4j.perf.jmh.AsyncAppenderLog4j1LocationBenchmark";
+            "org.apache.logging.log4j.perf.jmh.jmh_generated.AsyncAppenderLog4j1LocationBenchmark_jmhType";
 
     /** Level both fixtures' events are emitted at, exactly as their benchmarks emit them. */
     private static final Level SCRIPTED_LEVEL = Level.INFO;
@@ -147,10 +135,20 @@ class NoOpAppenderCountParityTest {
      * script and when the script drifts from the baseline, and the script is itself pinned record for record by the
      * shared harness's manifest.
      * </p>
+     * <p>
+     * The fixture's <em>raw</em> bytes are asserted as well, and not merely its records. This fixture is documented
+     * as pure payload — two records and nothing else — and the record reader deliberately drops comment and blank
+     * lines, so on records alone an inserted comment, a leading blank line, a missing final line separator or a
+     * surplus trailing one would all pass unnoticed while contradicting that documented form. The expected raw text
+     * is assembled from the very same derived records, so this second assertion adds a form constraint without
+     * introducing a competing statement of the counts.
+     * </p>
+     *
+     * @throws IOException if the committed fixture cannot be read
      */
     @Test
     @DisplayName("noOpAppender.count.baseline.txt records exactly T6 then T7, each matching its scripted event count")
-    void recordedCountsAreExactlyTheTwoFixturesInOrder() {
+    void recordedCountsAreExactlyTheTwoFixturesInOrder() throws IOException {
         final List<String> expected = new ArrayList<>();
         expected.add(NO_LOCATION_CONFIG_ID
                 + '='
@@ -166,6 +164,16 @@ class NoOpAppenderCountParityTest {
                         + LOCATION_CONFIG_ID
                         + "; a reordered, renamed, repeated, added or re-valued record is a drift between the two"
                         + " fixtures and never a baseline to adjust");
+        final StringBuilder expectedRawForm = new StringBuilder();
+        for (final String record : expected) {
+            expectedRawForm.append(record).append('\n');
+        }
+        assertEquals(
+                expectedRawForm.toString(),
+                ParityCorpus.readResource(COUNT_BASELINE_RESOURCE),
+                COUNT_BASELINE_RESOURCE + " must be pure payload: exactly those two records, one per line, each"
+                        + " terminated by a single line separator, with no comment, no blank line, no surplus"
+                        + " separator and no other byte");
     }
 
     @Test
@@ -184,13 +192,11 @@ class NoOpAppenderCountParityTest {
      * Boots one fixture in its own context, replays that fixture's scripted events and asserts the counting appender
      * received exactly the recorded number of them.
      * <p>
-     * <strong>The order of the four steps is load-bearing and must not be rearranged.</strong> Stopping a context
-     * detaches its configuration before stopping it, so the appender has to be resolved while the context is still
-     * running and the reference held across the stop; asking for it afterwards yields nothing. Stopping is also what
-     * drains the asynchronous wrapper's queue into the appender — the wrapper's dispatcher is signalled, processes
-     * whatever is left and is joined without a deadline, and the configuration stops asynchronous appenders ahead of
-     * the appenders they feed — so the count has to be read after the stop. Read any earlier, it observes a queue
-     * still in flight.
+     * <strong>The ordering here is load-bearing and must not be rearranged.</strong> Stopping a context detaches
+     * its configuration before stopping it, so the appender must be resolved while the context still runs and the
+     * reference held across the stop; asking for it afterwards yields nothing. Stopping is also what drains the
+     * asynchronous wrapper's queue into the appender, so the count must be read after the stop — read any earlier,
+     * it observes a queue still in flight.
      * </p>
      * <p>
      * The remedy for an undercount is therefore this ordering and nothing else. Waiting for the queue, relaxing the
@@ -210,15 +216,11 @@ class NoOpAppenderCountParityTest {
         assertScriptedEventIdentity(configId, expectedLoggerName);
         final CountingNoOpAppender countingAppender;
         try (LoggerContext context = ParityCorpus.startContext(configId, configResourcePath)) {
-            // 1. Resolve the appender while the configuration is still attached, and keep the reference.
             countingAppender = countingAppender(context, configId, configResourcePath);
             assertAsynchronousNoOpWiring(
                     context.getConfiguration(), configResourcePath, LOCATION_CONFIG_ID.equals(configId));
-            // 2. Replay exactly one fresh pass of this fixture's scripted events.
             ParityCorpus.replay(context, configId);
-            // 3. Closing stops the context, which drains the asynchronous queue into the appender.
         }
-        // 4. Only now is the counter complete.
         assertEquals(
                 recordedCount,
                 countingAppender.getCount(),
@@ -240,7 +242,7 @@ class NoOpAppenderCountParityTest {
      * </p>
      *
      * @param configId the configuration id whose scripted events are checked
-     * @param expectedLoggerName the acquisition-site logger name every one of those events must carry
+     * @param expectedLoggerName the resolved logger name every one of those events must carry
      */
     private static void assertScriptedEventIdentity(final String configId, final String expectedLoggerName) {
         final List<ParityCorpus.Event> events = ParityCorpus.events(configId);
@@ -251,8 +253,8 @@ class NoOpAppenderCountParityTest {
                     expectedLoggerName,
                     event.loggerName(),
                     "logger name of scripted event " + (index + 1) + " of " + configId
-                            + "; the name is carried character for character from the acquisition site and must not"
-                            + " be corrected, shortened or replaced by a generated form");
+                            + "; the name is carried character for character from what the acquisition site resolves"
+                            + " at runtime and must not be shortened to the declared state class");
             assertEquals(
                     SCRIPTED_LEVEL,
                     event.level(),
@@ -332,17 +334,10 @@ class NoOpAppenderCountParityTest {
     }
 
     /**
-     * Resolves the counting appender from a running configuration, by the name the fixture binds it to.
-     * <p>
-     * Resolution is by name and by name only. The superseded component published its counter as a field whereas the
-     * replacement publishes an instance accessor, and that difference is bridged here purely by asking the
-     * configuration for the appender and calling the accessor: the plugin is never constructed directly, never
-     * subclassed, never read reflectively, and no adapter stands between the two shapes.
-     * </p>
-     * <p>
-     * The type is checked explicitly rather than left to the assignment, so a fixture that bound this name to some
-     * other appender reports what it bound instead of failing with a bare cast error.
-     * </p>
+     * Resolves the counting appender from a running configuration, by the exact name the fixture binds it to and by
+     * nothing else: the plugin is never constructed directly, subclassed or read reflectively. The concrete type is
+     * checked explicitly rather than left to the assignment, so a fixture that bound this name to some other
+     * appender reports what it bound instead of failing with a bare cast error.
      */
     private static CountingNoOpAppender countingAppender(
             final LoggerContext context, final String configId, final String configResourcePath) {
@@ -360,12 +355,9 @@ class NoOpAppenderCountParityTest {
     }
 
     /**
-     * Returns the count recorded for one configuration id.
-     * <p>
-     * The count is widened to a {@code long} because that is the width the replacement appender's accessor reports.
-     * A missing id is reported by name rather than allowed to unbox to a null-pointer failure, so a baseline that
+     * Returns the count recorded for one configuration id, widened to the width the appender's accessor reports. A
+     * missing id is reported by name rather than allowed to unbox to a null-pointer failure, so a baseline that
      * stopped covering one of the two fixtures says so.
-     * </p>
      *
      * @throws IllegalStateException if the committed baseline carries no count for that id
      */

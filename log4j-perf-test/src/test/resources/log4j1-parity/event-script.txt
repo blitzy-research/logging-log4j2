@@ -166,25 +166,27 @@
 # tokens were configured -- and neither may be dropped in favour of the other.
 #
 # -----------------------------------------------------------------------------
-# LOGGER IDENTITY -- NAMES COME FROM THE ACQUISITION SITE
+# LOGGER IDENTITY -- NAMES ARE THE NAMES THE ARMS ACTUALLY RESOLVE
 # -----------------------------------------------------------------------------
-# Logger names are carried character for character from the acquisition site in
-# the source: a class literal where the arm names a class, and the declaring
-# benchmark class where the arm asks for the class of its own state object. The
+# Logger names are carried character for character from what the acquisition
+# site RESOLVES AT RUNTIME. Where an arm names a class literal, that is the
+# literal's own class. Where an arm asks for the class of its own state object,
+# it is the class of the object the benchmark harness actually instantiated. The
 # names are listed with their provenance in the per-configuration sections
 # below.
 #
-# ** RECORD THE ACQUISITION SITE'S OWN CLASS, NEVER A RUNTIME ARTEFACT OF THE
-# ** BENCHMARK HARNESS. ** When a benchmark trial runs, the harness instantiates
-# ** a generated subclass of each state class, so an arm that asks for the class
-# ** of its state object resolves, in that particular runtime, to a generated
-# ** name. That name is a property of the benchmark harness, not of either
-# ** logging generation: it changes when the harness changes and stays the same
-# ** when the logging generation changes, so it carries no parity information.
-# ** Recording it would also make this corpus disagree with the peer corpus,
-# ** which records the very same acquisition form under the declaring class's own
-# ** name. The migration preserves the acquisition EXPRESSION, and these names
-# ** are that expression's own class.
+# ** RECORD THE NAME THE ARM RESOLVES, NEVER THE ONE ITS SOURCE APPEARS TO
+# ** DECLARE. ** The harness instantiates a generated subclass of each state
+# ** class, so an arm that asks for the class of its state object resolves to a
+# ** name in the generated subpackage carrying the generated-state suffix. Three
+# ** arms do exactly that, and their names are recorded in that resolved form
+# ** because it is the form under which their events are really emitted: the
+# ** rendered capture of the first configuration below shows the abbreviated
+# ** name with the suffix, so recording the declaring class instead would put
+# ** this script into disagreement with its own committed bytes. What the
+# ** migration preserves is the acquisition EXPRESSION -- neither generation
+# ** rewrote it, and both therefore resolve the same name -- and these entries
+# ** record what that expression evaluates to.
 #
 # One name is deliberately not the class that emits the event, and it is
 # preserved exactly as it stands -- see the second T2 entry.
@@ -271,17 +273,10 @@
 #     normaliser, with the capture environment first proved equivalent by
 #     reproducing every untouched capture in both corpora byte for byte.
 #
-# Four captures were corrected this way when this script was restored to the
-# manifest below -- T1, T2, T3 and T5. What changed in them was WHICH EVENTS THE
-# SCRIPT REPLAYS, not how any token renders: two invented level-padding events
-# and one invented positive control were withdrawn, two logger names were
-# recorded from their acquisition site rather than from a benchmark-harness
-# runtime artefact, and T5's level was recorded from the same source as its name
-# and its message. Every surviving byte was already present in a base-commit
-# capture, and the tokens whose text moved -- the abbreviated logger name and the
-# unpadded level -- are each evidenced by another base-commit capture line in
-# this same corpus. The sibling document beside the captures records the
-# derivation row by row.
+# A correction under that rule may change WHICH EVENTS THE SCRIPT REPLAYS; it may
+# never change how a token renders. The sibling document beside the captures
+# records each capture's derivation row by row, and that document -- not this
+# one -- is where such a derivation belongs.
 
 # =============================================================================
 # THE EVENT SCRIPT
@@ -327,15 +322,17 @@
 # changes the rendered text and breaks parity.
 #
 # Those two arms ask for a logger named after the class of their state object,
-# so the recorded name is the declaring benchmark class -- see LOGGER IDENTITY
-# above for why a benchmark-harness runtime artefact is not recorded here.
+# and the class of that object is the generated state subclass the benchmark
+# harness instantiates -- so the recorded name carries the generated subpackage
+# and suffix. See LOGGER IDENTITY above; the name below was read out of a real
+# run, not derived from the source's class declaration.
 #
 # T1's capture is the corpus's rendered proof for the %c{1} abbreviation: the
 # converter retains the trailing name part, so each of these three lines renders
 # a full simple class name and never a dotted contraction of the package.
 T1|org.apache.logging.log4j.perf.jmh.FileAppenderBenchmark|DEBUG|This is a debug message
-T1|org.apache.logging.log4j.perf.jmh.FileAppenderParamsBenchmark|DEBUG|This is a debug [1] message
-T1|org.apache.logging.log4j.perf.jmh.FileAppenderParamsBenchmark|DEBUG|Val1=2, val2=1, val3=1
+T1|org.apache.logging.log4j.perf.jmh.jmh_generated.FileAppenderParamsBenchmark_jmhType|DEBUG|This is a debug [1] message
+T1|org.apache.logging.log4j.perf.jmh.jmh_generated.FileAppenderParamsBenchmark_jmhType|DEBUG|Val1=2, val2=1, val3=1
 
 # -----------------------------------------------------------------------------
 # T2 -- /log4j12-perf2.xml, ROOT LEVEL ERROR, two lines, both DEBUG
@@ -432,7 +429,7 @@ T3|org.apache.logging.log4j.perf.jmh.FileAppenderWithLocationBenchmark|DEBUG|Thi
 T4|org.apache.logging.log4j.perf.jmh.FileAppenderThrowableBenchmark|ERROR|Caught an exception|IllegalStateException:Test Throwable
 
 # -----------------------------------------------------------------------------
-# T5 -- /perf-log4j12-async.xml, root level debug, one event, DEBUG
+# T5 -- /perf-log4j12-async.xml, root level debug, one event, INFO
 # -----------------------------------------------------------------------------
 # T5 HAS NO CONSUMER INSIDE THIS MODULE. An exhaustive search of the benchmark
 # sources finds nothing that selects perf-log4j12-async.xml, yet the file is in
@@ -447,15 +444,16 @@ T4|org.apache.logging.log4j.perf.jmh.FileAppenderThrowableBenchmark|ERROR|Caught
 #                configuration held in a different module, whose translation
 #                belongs to the peer corpus; what carries over here is the
 #                logger name.
-#   level        DEBUG, the level prescribed for this entry. T5's root level is
-#                debug, so a DEBUG event is admitted and the entry exercises the
-#                level boundary exactly. The peer corpus records INFO for the
-#                same message against its OWN copy of this configuration,
-#                because there the entry is carried from that runner's latency
-#                loop, which emits at INFO, and the peer therefore preserves
-#                that arm's level. The two corpora are deliberately not
-#                harmonised: each records the level its own entry's source
-#                prescribes, and neither may be "corrected" to match the other.
+#   level        PRESERVED, and INFO. The message below is emitted by that
+#                runner's latency loop, and every one of that runner's emissions
+#                is at INFO. Recording any other level would re-level a real
+#                event, which this corpus may not do -- the level must come from
+#                the same source as the name and the message, not from whatever
+#                the root happens to admit. T5's root level is debug, so INFO is
+#                admitted and the event is rendered. The peer corpus records this
+#                same runner, message and level for its own copies of this
+#                configuration, so the two corpora agree, as two records of one
+#                real emission must.
 #   message      PRESERVED. The runner's latency-message constant, emitted
 #                verbatim by its latency loop. Chosen over the same interface's
 #                throughput constant -- five concatenated hundred-character
@@ -467,7 +465,7 @@ T4|org.apache.logging.log4j.perf.jmh.FileAppenderThrowableBenchmark|ERROR|Caught
 # before the line separator. That space is part of the expected output and is
 # compared byte for byte. Its "%p" is unpadded, so this capture is also the
 # corpus's rendered evidence that an unpadded level token carries no pad byte.
-T5|org.apache.logging.log4j.core.async.perftest.RunLog4j1|DEBUG|Short msg
+T5|org.apache.logging.log4j.core.async.perftest.RunLog4j1|INFO|Short msg
 
 # -----------------------------------------------------------------------------
 # T6 -- /perf-log4j12-async-noOpAppender.xml, root debug, TWELVE events, INFO
@@ -483,20 +481,26 @@ T5|org.apache.logging.log4j.core.async.perftest.RunLog4j1|DEBUG|Short msg
 # p11 in order, the separator is exactly a comma followed by a space, and there
 # is no space around the equals sign.
 #
+# This benchmark asks for a logger named after the class of its own state
+# object, so the recorded name is the generated state subclass the harness
+# instantiates -- the resolved form, read out of a real run.
+#
 # T6 writes no file. Its observable output is the appender's event count, and
-# for one fresh replay of the twelve lines below that count is TWELVE.
-T6|org.apache.logging.log4j.perf.jmh.AsyncAppenderLog4j1Benchmark|INFO|aaaaaaaaaaaaaaaa
-T6|org.apache.logging.log4j.perf.jmh.AsyncAppenderLog4j1Benchmark|INFO|p1=1
-T6|org.apache.logging.log4j.perf.jmh.AsyncAppenderLog4j1Benchmark|INFO|p1=1, p2=2
-T6|org.apache.logging.log4j.perf.jmh.AsyncAppenderLog4j1Benchmark|INFO|p1=1, p2=2, p3=3
-T6|org.apache.logging.log4j.perf.jmh.AsyncAppenderLog4j1Benchmark|INFO|p1=1, p2=2, p3=3, p4=4
-T6|org.apache.logging.log4j.perf.jmh.AsyncAppenderLog4j1Benchmark|INFO|p1=1, p2=2, p3=3, p4=4, p5=5
-T6|org.apache.logging.log4j.perf.jmh.AsyncAppenderLog4j1Benchmark|INFO|p1=1, p2=2, p3=3, p4=4, p5=5, p6=6
-T6|org.apache.logging.log4j.perf.jmh.AsyncAppenderLog4j1Benchmark|INFO|p1=1, p2=2, p3=3, p4=4, p5=5, p6=6, p7=7
-T6|org.apache.logging.log4j.perf.jmh.AsyncAppenderLog4j1Benchmark|INFO|p1=1, p2=2, p3=3, p4=4, p5=5, p6=6, p7=7, p8=8
-T6|org.apache.logging.log4j.perf.jmh.AsyncAppenderLog4j1Benchmark|INFO|p1=1, p2=2, p3=3, p4=4, p5=5, p6=6, p7=7, p8=8, p9=9
-T6|org.apache.logging.log4j.perf.jmh.AsyncAppenderLog4j1Benchmark|INFO|p1=1, p2=2, p3=3, p4=4, p5=5, p6=6, p7=7, p8=8, p9=9, p10=10
-T6|org.apache.logging.log4j.perf.jmh.AsyncAppenderLog4j1Benchmark|INFO|p1=1, p2=2, p3=3, p4=4, p5=5, p6=6, p7=7, p8=8, p9=9, p10=10, p11=11
+# for one fresh replay of the twelve lines below that count is TWELVE. Because
+# no rendered line exists to carry the name, the consuming test asserts these
+# logger names directly instead.
+T6|org.apache.logging.log4j.perf.jmh.jmh_generated.AsyncAppenderLog4j1Benchmark_jmhType|INFO|aaaaaaaaaaaaaaaa
+T6|org.apache.logging.log4j.perf.jmh.jmh_generated.AsyncAppenderLog4j1Benchmark_jmhType|INFO|p1=1
+T6|org.apache.logging.log4j.perf.jmh.jmh_generated.AsyncAppenderLog4j1Benchmark_jmhType|INFO|p1=1, p2=2
+T6|org.apache.logging.log4j.perf.jmh.jmh_generated.AsyncAppenderLog4j1Benchmark_jmhType|INFO|p1=1, p2=2, p3=3
+T6|org.apache.logging.log4j.perf.jmh.jmh_generated.AsyncAppenderLog4j1Benchmark_jmhType|INFO|p1=1, p2=2, p3=3, p4=4
+T6|org.apache.logging.log4j.perf.jmh.jmh_generated.AsyncAppenderLog4j1Benchmark_jmhType|INFO|p1=1, p2=2, p3=3, p4=4, p5=5
+T6|org.apache.logging.log4j.perf.jmh.jmh_generated.AsyncAppenderLog4j1Benchmark_jmhType|INFO|p1=1, p2=2, p3=3, p4=4, p5=5, p6=6
+T6|org.apache.logging.log4j.perf.jmh.jmh_generated.AsyncAppenderLog4j1Benchmark_jmhType|INFO|p1=1, p2=2, p3=3, p4=4, p5=5, p6=6, p7=7
+T6|org.apache.logging.log4j.perf.jmh.jmh_generated.AsyncAppenderLog4j1Benchmark_jmhType|INFO|p1=1, p2=2, p3=3, p4=4, p5=5, p6=6, p7=7, p8=8
+T6|org.apache.logging.log4j.perf.jmh.jmh_generated.AsyncAppenderLog4j1Benchmark_jmhType|INFO|p1=1, p2=2, p3=3, p4=4, p5=5, p6=6, p7=7, p8=8, p9=9
+T6|org.apache.logging.log4j.perf.jmh.jmh_generated.AsyncAppenderLog4j1Benchmark_jmhType|INFO|p1=1, p2=2, p3=3, p4=4, p5=5, p6=6, p7=7, p8=8, p9=9, p10=10
+T6|org.apache.logging.log4j.perf.jmh.jmh_generated.AsyncAppenderLog4j1Benchmark_jmhType|INFO|p1=1, p2=2, p3=3, p4=4, p5=5, p6=6, p7=7, p8=8, p9=9, p10=10, p11=11
 
 # -----------------------------------------------------------------------------
 # T7 -- /perf-log4j12-async-location-noOpAppender.xml, root debug, ONE, INFO
@@ -505,6 +509,8 @@ T6|org.apache.logging.log4j.perf.jmh.AsyncAppenderLog4j1Benchmark|INFO|p1=1, p2=
 # wrapper, and its benchmark declares exactly ONE arm, logging the same shared
 # sixteen-character constant. Location capture changes the cost of an event,
 # not the number of events, so T7's expected count for one fresh replay is ONE.
+# Its acquisition is dynamic like T6's, so its name is recorded in the same
+# resolved form and is likewise asserted directly by the consuming test.
 #
 # CROSS-REFERENCE, so the two fixtures stay self-consistent: the count baseline
 # beside this file records T6 = 12 and T7 = 1, in that order, as its only two
@@ -513,28 +519,33 @@ T6|org.apache.logging.log4j.perf.jmh.AsyncAppenderLog4j1Benchmark|INFO|p1=1, p2=
 # document beside it. Change one of these fixtures and the other must change
 # with it, which is why the consuming test asserts each recorded count against
 # the number of events this script carries for the same configuration.
-T7|org.apache.logging.log4j.perf.jmh.AsyncAppenderLog4j1LocationBenchmark|INFO|aaaaaaaaaaaaaaaa
+T7|org.apache.logging.log4j.perf.jmh.jmh_generated.AsyncAppenderLog4j1LocationBenchmark_jmhType|INFO|aaaaaaaaaaaaaaaa
 
 # =============================================================================
 # INVARIANTS -- CHECK THESE BEFORE CHANGING ANYTHING ABOVE
 # =============================================================================
 # * 21 data lines: T1=3, T2=2, T3=1, T4=1, T5=1, T6=12, T7=1 -- all twenty-one
 #   benchmark-derived, none contributed by this corpus.
-# * Exactly three levels appear, and no fourth is admissible: DEBUG on T1, T2,
-#   T3 and T5, ERROR on T4, INFO on T6 and T7. Each is the level its own source
+# * Exactly three levels appear, and no fourth is admissible: DEBUG on T1, T2
+#   and T3, ERROR on T4, INFO on T5, T6 and T7. Each is the level its own source
 #   emits. Any other level on a data line is rejected outright by the grammar
 #   above, and the harness fails loudly rather than replaying it.
 # * No fixture carries an event added to make a token observable. The %5p field
 #   width is verified by the consuming test's character-for-character assertion
 #   on each fixture's configured conversion pattern, as recorded above.
-# * Eight configuration-and-logger entries resolving to SEVEN distinct logger
-#   names, each carried character for character from its acquisition site. The
-#   with-location benchmark's name accounts for two of the eight: once as T3's
-#   own logger, and once as the deliberate cross-class name on the second T2
-#   line.
-# * Every logger name is the acquisition site's own class. No name carries a
-#   benchmark-harness runtime artefact such as a generated state-class suffix,
-#   and none may be rewritten into that form.
+# * NINE configuration-and-logger pairings resolving to EIGHT distinct logger
+#   names, each carried character for character from what its acquisition site
+#   resolves. The with-location benchmark's name accounts for two of the nine:
+#   once as T3's own logger, and once as the deliberate cross-class name on the
+#   second T2 line.
+# * FIVE names resolve to the class their source declares -- four requested by a
+#   class literal, and the runner's own, which asks for its class but is never
+#   subclassed. THREE resolve to the generated state subclass the benchmark
+#   harness instantiates, and those three -- the second and third T1 entries, all
+#   twelve T6 entries and the T7 entry -- are recorded in the generated
+#   subpackage with the generated-state suffix, because that is the name under
+#   which their events are emitted. None of the eight may be rewritten from the
+#   form it resolves to into the other form.
 # * The optional fifth field appears on T4 and only on T4.
 # * No timestamp, no random value, no absolute path, no advancing counter and
 #   no environment-dependent text anywhere in this file.

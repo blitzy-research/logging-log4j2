@@ -50,55 +50,38 @@ import org.junit.jupiter.api.Test;
  * <p>
  * Each case is independent and follows one sequence: remove the destination, boot the fixture in its own logger
  * context from its classpath location, replay {@link ParityCorpus}'s fixed event script, <em>stop the context</em>
- * so the writer flushes and any queue drains, read the produced file, normalize it and compare it with the
- * baseline captured from the superseded generation before any dependency was removed. Nothing is read before the
- * stop: four of the fixtures disable immediate flush and the fifth is both buffered and asynchronous, so a
- * capture taken while the context still runs is a race rather than a result.
+ * so the writer flushes and any queue drains, then read, normalize and compare. Nothing is read before the stop:
+ * four fixtures disable immediate flush and the fifth is both buffered and asynchronous, so a capture taken while
+ * the context still runs is a race rather than a result. Destinations must also be fresh, since four fixtures
+ * share one file and none of them truncates.
  * </p>
  * <p>
- * <strong>Acceptance is an empty normalized diff.</strong> The normalizer belongs to {@link ParityCorpus} and
- * substitutes exactly four rendered elements — timestamp, thread name, source line number and absolute path — so
- * every other byte is compared literally: the level text and its padding width, the logger-name abbreviation, the
- * caller class and method rendered beside the one normalized line number, every literal separator, the
- * byte-significant double spaces an absent context-map key leaves behind, the one significant trailing space, and
- * a throwable's full tab-indented rendering. Nothing is trimmed and no run of spaces is collapsed.
+ * <strong>Acceptance is an empty normalized diff.</strong> {@link ParityCorpus#normalize(String)} substitutes
+ * exactly four rendered elements — timestamp, thread name, source line number and absolute path — so every other
+ * byte is compared literally, including level padding, logger-name abbreviation, the caller class and method
+ * rendered beside the one normalized line number, the double spaces and trailing space an absent context-map key
+ * leaves behind, and a throwable's tab-indented rendering. <strong>A non-empty diff is a defect in the translated
+ * configuration</strong>, never a reason to widen the normalizer, weaken an assertion, wait for output that has
+ * not arrived, or edit a committed baseline.
  * </p>
  * <p>
- * <strong>A non-empty diff is a defect in the translated configuration.</strong> It is never a reason to widen the
- * normalizer, to weaken an assertion, to wait for output that has not arrived, or to edit a committed baseline.
- * </p>
- * <p>
- * Two obligations go beyond comparing text, and both are the corpus's own. First, the fixture whose root level is
- * {@code error} admits none of the levels its scripted events carry, so its capture is byte-empty and can express
- * no wiring at all: the corpus requires that fixture's configuration to be asserted structurally as well, and
- * requires its conversion pattern to be bound to the pattern its {@code debug} sibling renders, because that is
- * the only route by which it inherits the sibling's rendered proof that the level field keeps its minimum width.
- * Second, the destinations must be fresh, since four fixtures share one file and none of them truncates.
- * Both are honoured below. The observed effective-configuration evidence and the rationale for every translation
- * decision live in the {@code effective-config.adoc} beside the baselines rather than here; this class is the
- * rendered-output gate.
+ * One fixture needs more than a text comparison. The fixture whose root level is {@code error} admits none of the
+ * levels its scripted events carry, so its byte-empty capture can express no wiring at all; its configuration is
+ * therefore asserted structurally as well, and its conversion pattern is bound to the constant its {@code debug}
+ * sibling uses, which is the only route by which it inherits that sibling's rendered proof that the level field
+ * keeps its minimum width.
  * </p>
  */
 class Log4j1ConfigParityTest {
 
-    // -----------------------------------------------------------------------------------------------------------
-    // The five fixtures. Every configuration keeps its original file name and classpath location, so each is
-    // loaded from the classpath root under that name; nothing here is renamed and no name is discovered.
-    // -----------------------------------------------------------------------------------------------------------
-
-    /** Synchronous file fixture, root level {@code debug}, padded level token. */
     private static final String T1 = "T1";
 
-    /** The same fixture at root level {@code error}, which is what makes its capture a suppression proof. */
     private static final String T2 = "T2";
 
-    /** The only fixture that renders caller location through its pattern. */
     private static final String T3 = "T3";
 
-    /** The only fixture whose script entry carries a throwable. */
     private static final String T4 = "T4";
 
-    /** The buffered, asynchronous file fixture, whose destination is module-relative. */
     private static final String T5 = "T5";
 
     private static final String T1_CONFIG = "/log4j12-perf.xml";
@@ -121,11 +104,6 @@ class Log4j1ConfigParityTest {
 
     private static final String T5_BASELINE = "/log4j1-parity/perf-log4j12-async.baseline.txt";
 
-    // -----------------------------------------------------------------------------------------------------------
-    // Structural expectations, carried verbatim from the translated fixtures
-    // -----------------------------------------------------------------------------------------------------------
-
-    /** Appender name shared by the four synchronous fixtures. */
     private static final String SHARED_APPENDER_NAME = "TestLogfile";
 
     /**
@@ -164,7 +142,6 @@ class Log4j1ConfigParityTest {
     /** Name of the asynchronous wrapper. Upper case, and not interchangeable with the peer fixtures' spelling. */
     private static final String ASYNC_APPENDER_NAME = "ASYNC";
 
-    /** Name of the file appender the asynchronous wrapper delegates to. */
     private static final String ASYNC_SINK_APPENDER_NAME = "File";
 
     /**
@@ -176,7 +153,6 @@ class Log4j1ConfigParityTest {
     /** Conversion pattern of the asynchronous fixture. The space before the line separator is real. */
     private static final String ASYNC_PATTERN = "%d %p %c{1} [%t] %X{aKey} %m %n";
 
-    /** Queue depth of the asynchronous wrapper, held verbatim from the superseded fixture's buffer size. */
     private static final int ASYNC_QUEUE_CAPACITY = 262144;
 
     /**
@@ -199,10 +175,6 @@ class Log4j1ConfigParityTest {
      * its buffer.
      */
     private static final int FILE_BUFFER_SIZE = 8192;
-
-    // -----------------------------------------------------------------------------------------------------------
-    // The fresh-destination contract
-    // -----------------------------------------------------------------------------------------------------------
 
     /**
      * Removes both destinations before every case.
@@ -241,10 +213,6 @@ class Log4j1ConfigParityTest {
         ParityCorpus.deleteDestination(ParityCorpus.TESTLOG4J_DESTINATION);
         ParityCorpus.deleteDestination(ParityCorpus.PERFTEST_DESTINATION);
     }
-
-    // -----------------------------------------------------------------------------------------------------------
-    // One independent case per fixture
-    // -----------------------------------------------------------------------------------------------------------
 
     /**
      * The three-line synchronous capture, one line per scripted event.
@@ -339,10 +307,6 @@ class Log4j1ConfigParityTest {
         assertRenderedParity(T5, T5_BASELINE, ParityCorpus.PERFTEST_DESTINATION);
     }
 
-    // -----------------------------------------------------------------------------------------------------------
-    // The comparison itself
-    // -----------------------------------------------------------------------------------------------------------
-
     /**
      * Compares one capture with its committed baseline through the corpus's normalizer.
      * <p>
@@ -401,20 +365,6 @@ class Log4j1ConfigParityTest {
                         + ", but its root level admits none of the levels its scripted events carry");
     }
 
-    // -----------------------------------------------------------------------------------------------------------
-    // Structural assertions, made while the configuration is still started
-    // -----------------------------------------------------------------------------------------------------------
-
-    /**
-     * Asserts the wiring of one of the four synchronous fixtures: it loaded and started, its root logger carries
-     * the expected level and additivity and resolves its single reference, and its file appender writes the
-     * expected destination with the expected conversion pattern, append disposition, buffer size and with immediate
-     * flush disabled.
-     *
-     * @param configuration the started configuration of a booted fixture
-     * @param expectedRootLevel level the fixture declares on its root logger
-     * @param expectedPattern conversion pattern the fixture declares, compared character for character
-     */
     private static void assertSharedFileFixture(
             final Configuration configuration, final Level expectedRootLevel, final String expectedPattern) {
         assertConfigurationStarted(configuration);
@@ -507,23 +457,11 @@ class Log4j1ConfigParityTest {
     }
 
     /**
-     * Asserts one file appender: that it exists under the expected name, is a file appender, started, writes the
-     * expected destination with the expected append disposition and buffer size, keeps immediate flush disabled as
-     * its superseded form did, and carries a pattern layout whose conversion pattern matches character for
-     * character.
-     * <p>
-     * Append disposition and buffer size are asserted alongside the flush flag because the three together are the
-     * fixture's write disposition, and the two generations reach it by different routes: the superseded one
-     * inferred no-flush from buffering, while this one takes each option independently. A capture cannot see any of
-     * them — a fixture that truncated where it should append, or that lost its buffer and flushed every event,
-     * renders exactly the same bytes.
-     * </p>
-     *
-     * @param configuration the started configuration of a booted fixture
-     * @param appenderName name the fixture binds the appender to
-     * @param expectedFileName destination the fixture declares, as the fixture spells it
-     * @param expectedPattern conversion pattern the fixture declares, compared character for character
-     * @param expectedAppend whether the fixture appends to its destination rather than truncating it
+     * Append disposition, buffer size and the flush flag are asserted together because the three are the fixture's
+     * write disposition, and the two generations reach it by different routes: the superseded one inferred no-flush
+     * from buffering, while this one takes each option independently. A capture cannot see any of them — a fixture
+     * that truncated where it should append, or that lost its buffer and flushed every event, renders exactly the
+     * same bytes.
      */
     private static void assertFileAppender(
             final Configuration configuration,

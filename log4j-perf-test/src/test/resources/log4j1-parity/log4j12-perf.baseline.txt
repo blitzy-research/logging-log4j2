@@ -1,3 +1,3 @@
 <TS> DEBUG [<THREAD>] FileAppenderBenchmark  - This is a debug message
-<TS> DEBUG [<THREAD>] FileAppenderParamsBenchmark  - This is a debug [1] message
-<TS> DEBUG [<THREAD>] FileAppenderParamsBenchmark  - Val1=2, val2=1, val3=1
+<TS> DEBUG [<THREAD>] FileAppenderParamsBenchmark_jmhType  - This is a debug [1] message
+<TS> DEBUG [<THREAD>] FileAppenderParamsBenchmark_jmhType  - Val1=2, val2=1, val3=1
