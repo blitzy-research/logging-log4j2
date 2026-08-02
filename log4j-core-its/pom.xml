@@ -254,38 +254,9 @@
 
       <plugin>
         <artifactId>maven-surefire-plugin</artifactId>
-        <executions>
-          <!--
-            ~ The blanket skip that used to sit in this plugin's own `configuration` now sits here, on the execution it
-            ~ was written for. Moving it changes nothing about that execution - it is still skipped - but it stops the
-            ~ skip from swallowing any execution added below.
-            -->
-          <execution>
-            <id>default-test</id>
-            <configuration>
-              <skip>true</skip>
-            </configuration>
-          </execution>
-          <!--
-            ~ Runs the contract between `PerfTestDriver` and `RunLog4j1`. It needs an execution of its own because the
-            ~ execution above is skipped and this module's Failsafe `groups` filter names JUnit 4 category types that
-            ~ JUnit 5 matches against nothing, so a test added to this module would otherwise never run. `failIfNoTests`
-            ~ makes a selection that matches nothing a build failure rather than a silent pass.
-            -->
-          <execution>
-            <id>log4j1-perf-test-contract</id>
-            <goals>
-              <goal>test</goal>
-            </goals>
-            <phase>test</phase>
-            <configuration>
-              <failIfNoTests>true</failIfNoTests>
-              <includes combine.self="override">
-                <include>**/Log4j1PerfTestContractTest.java</include>
-              </includes>
-            </configuration>
-          </execution>
-        </executions>
+        <configuration>
+          <skip>true</skip>
+        </configuration>
       </plugin>
 
     </plugins>

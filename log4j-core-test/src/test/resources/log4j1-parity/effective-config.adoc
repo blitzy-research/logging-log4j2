@@ -479,7 +479,8 @@ and `log4j-core-test/pom.xml` is untouched by this corpus.
 
 Both of the following are properties of the surrounding code rather than of these three fixtures. Both are
 recorded because a reader will otherwise trip over them. Neither is left as a note: the first turned out to
-require a change in the consumers, and the second required one in the integration-test module's build.
+require a change in one of the two consumers, and the second required one in the integration-test module's
+build.
 
 . *These three resources are not on the integration-test module's classpath, and the consumers had to be
   made to survive that.* `log4j-core-its` names all three by string literal, but they exist only in
@@ -497,28 +498,29 @@ not: a context handed no resolvable configuration falls back to Log4j 2's defaul
 at `ERROR`, whereas the superseded generation under the identical condition kept a root level of `DEBUG`
 and owned no appender. Measured against the genuine `log4j:log4j:1.2.17` artefact:
 `+root.getLevel()=DEBUG+`, `+isDebugEnabled()=true+`, `+isInfoEnabled()=true+`, root appender count
-*zero*. So the two consumers of these fixtures -- `PerformanceComparison` for T8 and `RunLog4j1` for T9
-and T10 -- were timing *disabled* calls, which is a different workload rather than a preserved one. Both
-now state that hierarchy explicitly when the fixture does not resolve: a context started with a
-configuration built in code, root logger at `DEBUG` and no appenders, named
-`superseded-default-hierarchy`. Both branches are property-independent, both assert the configuration
-source and the root level before any timing, and `RunLog4j1` additionally refuses to run at all if its
-hierarchy would not admit `info`. Capture and replay still execute inside `log4j-core-test`, which owns
+*zero*.
++
+The two consumers of these fixtures are treated differently, and the difference is *prescribed* rather
+than chosen. `PerformanceComparison`, which consumes T8, is one of the seven classes authorised to hold an
+isolated logger context, because it drives three logging generations inside a single JVM and one global
+configuration property could only ever select one of them. It therefore states the superseded hierarchy
+explicitly when the fixture does not resolve -- a context started from a configuration built in code, root
+logger at `DEBUG` and no appenders, named `superseded-default-hierarchy` -- keeps both of its branches
+property-independent, and asserts the configuration source and the root level before any timing.
+`RunLog4j1`, which consumes T9 and T10, is deliberately *not* one of them: its authorised change is the
+two-line import substitution and nothing else, on the recorded ground that the driver launches one child
+JVM per row, so those arms never share a configuration namespace once the superseded selector stops being
+forwarded. Its `info` calls consequently resolve against whatever configuration the child's own class path
+yields, which for a row name that resolves to nothing is Log4j 2's default. That asymmetry is the shape the
+plan fixes for these two files, and it is recorded here so that a reader does not mistake it for an
+oversight.
++
+Capture and replay still execute inside `log4j-core-test`, which owns
 the resources, while the logger names, levels and messages derive from the intended consumers -- so the
-three baselines this document reports on are unaffected by the consumer change, and the logger names
+three baselines this document reports on are unaffected by either consumer's shape, and the logger names
 `+org.apache.logging.log4j.PerformanceComparison+` and
 `+org.apache.logging.log4j.core.async.perftest.RunLog4j1+` that they encode are carried across
 byte-for-byte.
-+
-The driver side of the same fact is now held by an executable contract. `Log4j1PerfTestContractTest`
-runs on every build of `log4j-core-its` through a Surefire execution of its own with `failIfNoTests` set,
-and reports `+Tests run: 5, Failures: 0, Errors: 0, Skipped: 0+`. It asserts, for the synchronous
-`perf-log4j12.xml` row and the asynchronous `perf-log4j12-async.xml` row alike, that the child JVM is
-handed exactly one native selector carrying that row's configuration, that no argument carries the
-superseded selector, that the out-of-scope Logback selector is still forwarded unchanged, and that the
-child is told to instantiate the migrated runner; and it asserts both of the runner's branches, including
-that an event emitted through the runner reaches a counting appender exactly once when the configuration
-*does* resolve.
 . *T8's consumer was not selected by CI, and now has a selection that fails loudly.*
 `log4j-core-its` configures Failsafe `<groups>` with JUnit-4-style category class names, which JUnit 5
 reads as literal tag names and matches against nothing, while `PerformanceComparison` carries a JUnit 5

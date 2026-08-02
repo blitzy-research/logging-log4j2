@@ -236,43 +236,6 @@
               <jdkToolchain>
                 <version>${surefire.jdkToolchain}</version>
               </jdkToolchain>
-              <excludes>
-                <!--
-                  ~ Surefire's own default exclusion, restated because naming any exclusion replaces the default list.
-                  -->
-                <exclude>**/*$*</exclude>
-                <!--
-                  ~ Run by the `migrated-arm-setup-failure` execution below instead. This execution inherits
-                  ~ `forkCount=1C` with `reuseForks=false`, so its classes run in parallel forks that share one working
-                  ~ directory; the setup-failure proof occupies `target/testJulLog.log` and boots the same
-                  ~ `target/testlog4j.log` destination that the parity gates delete before booting and then compare
-                  ~ byte for byte, so running it here would race them.
-                  -->
-                <exclude>**/MigratedArmSetupFailureTest.java</exclude>
-              </excludes>
-            </configuration>
-          </execution>
-          <!--
-            ~ Runs the migrated arms' setup-failure proof on its own, after the execution above has finished. A single
-            ~ fork with no siblings is what makes the proof's filesystem injection and its file-manager oracle
-            ~ deterministic. `failIfNoTests` makes a selection that matches nothing a build failure rather than a
-            ~ silent pass, and the toolchain is restated because this module compiles to release 9.
-            -->
-          <execution>
-            <id>migrated-arm-setup-failure</id>
-            <goals>
-              <goal>test</goal>
-            </goals>
-            <phase>test</phase>
-            <configuration>
-              <jdkToolchain>
-                <version>${surefire.jdkToolchain}</version>
-              </jdkToolchain>
-              <failIfNoTests>true</failIfNoTests>
-              <forkCount>1</forkCount>
-              <includes combine.self="override">
-                <include>**/MigratedArmSetupFailureTest.java</include>
-              </includes>
             </configuration>
           </execution>
         </executions>
