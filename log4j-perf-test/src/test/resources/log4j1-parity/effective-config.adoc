@@ -900,8 +900,9 @@ option, and Log4j 2 does not.
 | Location capture
 | no -- caller-location capture is off on the asynchronous appender, and the pattern names no
   caller-location token
-| `includeLocation="false"` on the asynchronous appender, and the pattern names no caller-location
-  token
+| `includeLocation="null"` in the asynchronous appender's builder trace, i.e. *the attribute is not
+  declared in the translation*, so the builder default applies and caller-location capture resolves
+  *off*; the pattern names no caller-location token either
 | yes
 |===
 
@@ -959,8 +960,10 @@ already ships, so these two tables are also the evidence for that substitution.
 | Appender class
 | the superseded asynchronous appender wrapping the module's own custom no-op appender,
   `NoOpLog4jAppender`
-| `AsyncAppender` wrapping `CountingNoOpAppender`, which prints itself into the boot output as
-  `CountingNoOpAppender NoOp` because the plugin declares that it prints its object
+| `AsyncAppender` wrapping `CountingNoOpAppender`. Both halves are observable in the boot rather than
+  inferred: the plugin-build line names the counting appender's class as it is constructed, the factory
+  call that follows reads `createAppender(name="NoOp")`, and the pair is then reported together as
+  `createAppenders(={NoOp, ASYNC})`
 | yes, by substitution -- see the component-adaptation section
 
 | Layout pattern
@@ -982,9 +985,10 @@ already ships, so these two tables are also the evidence for that substitution.
 
 | Location capture
 | no -- the superseded appender declares no location option at all
-| `includeLocation="false"`, i.e. *the attribute is correctly omitted from the translation* and picks
-  up the builder default. Writing it explicitly as `false` would have been harmless but noisier; not
-  writing it is the faithful translation of "`not declared`"
+| `includeLocation="null"` in the asynchronous appender's builder trace, i.e. *the attribute is
+  correctly omitted from the translation* and picks up the builder default, resolving *off*. Writing it
+  explicitly as `false` would have been harmless but noisier; not writing it is the faithful
+  translation of "`not declared`"
 | yes
 |===
 
@@ -995,6 +999,16 @@ are `org.apache.logging.log4j.core.appender.AsyncAppender` and
 wherever T6 and T7 name them by their simple names. Simple names are used inside the tables because a
 dotted package prefix offers a browser no line-break opportunity, and two of them in adjacent cells
 force the table wider than the page.
+
+*The boot line the appender-class rows rest on*, reproduced here in full because this is the paragraph
+that carries dotted names, is
+`Building Plugin[name=appender, class=org.apache.logging.log4j.core.appender.CountingNoOpAppender].`
+Note what the boot does *not* print: a class-and-name description of the appender. The counting plugin
+declares that it prints its object, so the configuration node prints the appender's own string form, and
+an appender's string form is its *name* -- which is why the appender is listed simply as `NoOp`. The
+class is evidenced by the plugin-build line quoted above, and the instance by the
+`createAppender(name="NoOp")` call the boot logs immediately after it; no single combined string carries
+both.
 
 *Parity criterion.* The observable contract of a counting no-op appender is its count, so for T6 and
 T7 count identity *is* output identity. The committed count baseline records *twelve* events for T6 --
@@ -1044,7 +1058,9 @@ behaviour whose cost the benchmark exists to measure.
 
 | Appender class
 | the superseded asynchronous appender wrapping `NoOpLog4jAppender`
-| `AsyncAppender` wrapping `CountingNoOpAppender`, printed as `CountingNoOpAppender NoOp`
+| `AsyncAppender` wrapping `CountingNoOpAppender`, evidenced by the same three boot lines as T6 -- the
+  plugin-build line naming the class, `createAppender(name="NoOp")` naming the instance, and
+  `createAppenders(={NoOp, ASYNC})` listing the pair
 | yes, by substitution
 
 | Layout pattern
@@ -1753,9 +1769,12 @@ Three consequences, each of which is a decision rather than an accident:
 
 * The factory's single attribute and null layout are why the translated element is written
   *self-closing with only a name*, and needs no layout child.
-* Because the plugin declares that it prints its object, its own string form appears in the
-  `-Dlog4j2.debug` boot output, which is what made the T6 and T7 appender-class rows *observable*
-  rather than inferred.
+* Because the plugin declares that it prints its object, the configuration node prints the appender's
+  *own* string form rather than a class-plus-name description of it -- and an appender's string form is
+  its *name*, so the boot lists it as the bare `NoOp`. Had the plugin declared the opposite, the node
+  would have printed the class name followed by the name instead. The T6 and T7 appender-class rows are
+  *observable* rather than inferred either way, because the boot names the class on its own line as it
+  builds the plugin and names the instance in the factory call that follows.
 * The field-versus-method asymmetry is resolved *entirely* on the reading side: the sibling
   count-parity test retrieves the appender *by name*, `NoOp` nested under `ASYNC`, and calls the
   getter. That contract is discharged by delivered code, and it is restated here because the reading
@@ -2533,12 +2552,13 @@ conflate:
 * The *superseded* generation's package -- the one the prohibition is about, and the one whose dotted
   spelling is the only form an import statement or a class loader would accept -- appears *nowhere* in
   this document in that dotted form. Every citation of it is written as a *file path*, in slash form,
-  which no class loader would resolve. There are eight such citations, naming seven distinct files
-  (one file is cited twice).
-* The *target* generation's package is a different namespace, and its dotted class names *do* appear
-  here -- nine times, in observed boot output and in the target class names those tables record. Those
-  are the classes this migration moves *to*. They are not in scope for any prohibition, and their
-  presence is the point.
+  which no class loader would resolve. There are nine such citations, naming seven distinct files, two
+  of which are cited twice.
+* The *target* generation's package is a different namespace, and its dotted names *do* appear here --
+  *twelve* times. They occur as quoted `-Dlog4j2.debug` boot output, as the target appender classes the
+  appender-class rows record, in the fully-qualified note that keeps the T6 and T7 rows readable, as one
+  recorded logger name, and as one rendered thread name from a benchmark trial. Those are the classes
+  this migration moves *to*. They are not in scope for any prohibition, and their presence is the point.
 
 The gate over this module's test tree therefore returns nothing *without* an exclusion, and the
 permitted carve-out was never actually needed.

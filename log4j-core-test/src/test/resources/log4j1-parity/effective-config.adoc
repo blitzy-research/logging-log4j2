@@ -496,11 +496,22 @@ No configuration warning was emitted for any of the three fixtures. In particula
 appender's two guard warnings fired; see Record 4.
 
 One warning unrelated to these fixtures does appear, and is disclosed here so that nobody reproducing
-the capture mistakes it for a finding: `Error loading TraceContextProvider service`. It is an artefact
-of the minimal capture classpath, which carries only the API and Core artefacts and therefore no
-implementation of that optional service. It is emitted identically for all three fixtures, is
-independent of the configuration under test, and affects neither the effective configuration nor the
-rendered output.
+the capture mistakes it for a finding: `Error loading TraceContextProvider service`. Its cause is worth
+stating precisely, because the obvious explanation is the wrong one. It is *not* caused by the capture
+classpath merely lacking an implementation of that optional service: with no provider registered at all,
+the service registry finds nothing, logs nothing, and silently falls back to its no-op provider. The
+warning is emitted from a `catch` arm, so something has to *fail* rather than be absent. What failed was
+a *dangling service registration* -- a `META-INF/services` entry for the provider interface was visible
+on the capture classpath while the implementation class it names was not, so the service loader raised a
+`ServiceConfigurationError` from inside the registry's class initializer, which the registry caught and
+reported. Two consequences follow, and both are worth recording. First, the no-op provider is selected
+either way, so the outcome is identical to the silent case. Second, on this module's *real* test
+classpath, where that implementation class is present, the same initializer instead logs an informational
+`Using TraceContextProvider: ...` line and no warning at all -- so this warning is a property of the
+reduced capture environment, not of the module. The warning is emitted identically for all three
+fixtures, is independent of the configuration under test, and affects neither the effective configuration
+nor the rendered output: no fixture's pattern names a trace-context token, and the registry never
+supplies a value in any of the three cases.
 
 === Effective configuration
 
@@ -652,7 +663,7 @@ LoggerConfig$RootLogger$Builder(additivity="true", level="DEBUG", levelAndRefs="
     includeLocation="null", ={File}, ...)
 ----
 
-No configuration warning was emitted; only the unrelated capture-classpath warning noted under T8.
+No configuration warning was emitted; only the unrelated service-registration warning noted under T8.
 
 === Effective configuration
 
@@ -725,9 +736,12 @@ The migrated fixture renders, after normalization:
 <TS> INFO RunLog4j1 [<THREAD>]  Short msg
 ----
 
-byte-identical to `perf-log4j12.baseline.txt` -- *empty normalized diff*. The rendered line carries a
-double space after `]` and a *significant trailing space* before the line separator, neither of which
-is visible above; both are byte-compared and both are explained in Record 3.
+byte-identical to `perf-log4j12.baseline.txt` -- *empty normalized diff*. The rendered line carries two
+pieces of significant whitespace, and they differ in how visible they are above. The double space after
+`]` *is* reproduced in the block: it is the empty single-key context-map placeholder rendering between
+the two literal spaces the pattern supplies around it. The *significant trailing space* before the line
+separator is *not* visible above, because no reproduction of a line can show a space at its end. Both
+are byte-compared and both are explained in Record 3.
 
 == T10 -- `perf-log4j12-async.xml`
 
@@ -799,8 +813,10 @@ LoggerConfig$RootLogger$Builder(additivity="true", level="DEBUG", levelAndRefs="
 ----
 
 `BlockingQueueFactory=null` confirms that no queue factory was specified and the default was used. The
-dispatcher thread `AsyncAppenderEventDispatcher-1-ASYNC` was observed to start and to stop. No
-configuration warning was emitted; only the unrelated capture-classpath warning noted under T8.
+dispatcher thread `Log4j2-AsyncAppenderEventDispatcher-1-ASYNC` was observed to start and to stop -- the
+name carries the framework's own `Log4j2-` thread-name prefix ahead of the dispatcher's counter and the
+appender name, and it is quoted here in the full form the boot prints. No configuration warning was
+emitted; only the unrelated service-registration warning noted under T8.
 
 === Effective configuration
 
