@@ -118,7 +118,8 @@ classes that read it now exist in
 
 | `Log4j1ConfigParityTest`
 | five independent cases, one per file-based fixture T1-T5, each comparing the whole normalized
-  capture with its committed baseline
+  capture with its committed baseline, plus one supplementary case that renders the padded level field
+  directly and touches no capture and no baseline
 
 | `NoOpAppenderCountParityTest`
 | the custom-component gate: it resolves the `NoOp` appender by name under `ASYNC` for T6 and T7 and
@@ -278,6 +279,17 @@ bridged arithmetic exactly and silently turn immediate flushing back on.
 A row is accepted only when its superseded-observed and Log4j 2-observed values agree. *Every row in
 every table below agrees outright* -- there is no row whose acceptance rests on a difference being
 argued inert.
+
+A row is also accepted only from a boot that reported nothing at `ERROR` or above. That is not a
+courtesy check: an unresolved appender reference, an unrecognised attribute and a silent fallback are all
+reported through the status channel, and *none of them stops a context from starting*, so any of the
+three could leave a table row looking right and a capture rendering matching bytes. The consuming test
+therefore holds the same contract in code -- `Log4j1ConfigParityTest` registers a status listener at
+`ERROR` before every boot and asserts nothing was recorded twice per case: once after the fixture has
+been located, built and started, and again after its script has been replayed and its context stopped,
+which is the window the asynchronous fixture reports from its own dispatcher thread. A recorded event
+fails the case by name and quotes what was reported, rather than scrolling past on a console that a
+passing build hides.
 
 That was not true of an earlier state of this corpus, and the history is recorded rather than erased,
 because it is the reason one translated attribute looks redundant. The additivity row on the root
@@ -1974,6 +1986,15 @@ A width deleted in translation fails both immediately while rendering identical 
 *Claim two -- the width means the same thing in both generations -- is settled by rendering,* through the
 cross-generation measurement in the subsection below, which does not depend on any event this corpus
 replays.
+
+That measurement is also carried by a live case of the consuming test rather than by this document alone.
+`Log4j1ConfigParityTest.paddedLevelFieldKeepsItsMinimumWidth` boots T1's fixture in a context of its own,
+takes the conversion pattern that fixture configures, and renders a level shorter than the field through
+`+%5p+` and through a bare `+%p+` in isolation: the first must right-align it in five columns, the second
+must not pad it, and at exactly the field width the two must render identically -- which is precisely why
+no capture in this corpus can carry the evidence. That case replays no scripted event, writes to no
+destination and reads no baseline, so *supplementary evidence sits beside the oracle and never inside
+it*: the golden master keeps its twenty-one benchmark-derived events and gains no fabricated one.
 
 [NOTE]
 .Why a shorter-levelled event was not added to close claim one by rendering instead

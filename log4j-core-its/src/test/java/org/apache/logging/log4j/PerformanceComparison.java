@@ -22,14 +22,12 @@ import java.io.FileOutputStream;
 import java.io.FileWriter;
 import java.io.OutputStream;
 import java.io.Writer;
-import java.net.URISyntaxException;
 import java.net.URL;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
 import org.apache.logging.log4j.core.LoggerContext;
 import org.apache.logging.log4j.core.config.ConfigurationFactory;
 import org.apache.logging.log4j.core.config.Configurator;
-import org.apache.logging.log4j.core.config.DefaultConfiguration;
 import org.apache.logging.log4j.core.test.util.Profiler;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
@@ -43,18 +41,21 @@ import org.junit.jupiter.api.Test;
 class PerformanceComparison {
 
     /**
-     * Serves the configuration that was migrated from Log4j 1.x. It is held in a logger context of its own rather
-     * than in the global one, because this class drives three logging generations inside a single JVM: two of them
-     * are now the same implementation, so a global configuration property could only ever select one of the two.
-     * Assigned by {@link #setupClass()}, which JUnit runs before it instantiates this class, so the instance
-     * initializer below always observes a started context.
+     * Serves the configuration that was migrated from Log4j 1.x. It is held in a logger context of its own rather than
+     * in the global one, because this class drives three logging generations inside a single JVM: two of them are now
+     * the same implementation, so a single global configuration property could only ever select one of the two. A
+     * context that is handed its configuration location directly consults no property at all, so neither arm can
+     * displace the other. Assigned by {@link #setupClass()}, which JUnit runs before it instantiates this class, so
+     * the instance initializer below always observes a started context, and stopped again by {@link #cleanupClass()}
+     * so that no started context outlives the test.
      */
     private static LoggerContext migratedContext;
 
     private final Logger logger = LogManager.getLogger(PerformanceComparison.class.getName());
     private final org.slf4j.Logger logbacklogger = org.slf4j.LoggerFactory.getLogger(PerformanceComparison.class);
     // Deliberately the same logger name as the two arms above, so that the three measurements stay comparable.
-    private final Logger log4jlogger = migratedContext.getLogger(PerformanceComparison.class.getName());
+    private final org.apache.logging.log4j.Logger log4jlogger =
+            migratedContext.getLogger(PerformanceComparison.class.getName());
 
     // How many times should we try to log:
     private static final int COUNT = 500000;
@@ -70,35 +71,29 @@ class PerformanceComparison {
     private static final String MIGRATED_CONTEXT_NAME = "performance-comparison-migrated";
 
     @BeforeAll
-    static void setupClass() throws URISyntaxException {
+    static void setupClass() throws Exception {
         System.setProperty(ConfigurationFactory.CONFIGURATION_FILE_PROPERTY, CONFIG);
         System.setProperty(LOGBACK_CONF, LOGBACK_CONFIG);
         // The migrated configuration is selected by pointing a dedicated context straight at it, rather than by
         // setting a global property, so that it cannot displace the native configuration selected just above.
+        // That fixture ships in another module's test resources and is therefore not always on this module's test
+        // classpath. When it is absent the location stays null and is passed through unchanged, which reproduces
+        // what was observed before the migration: the Log4j 1.x arm found no configuration either, so it rendered
+        // nothing to any destination. Passing the null location on preserves that outcome instead of failing.
         final URL migratedConfigLocation = PerformanceComparison.class.getResource("/" + LOG4J_CONFIG);
-        final LoggerContext starting;
-        if (migratedConfigLocation == null) {
-            // This configuration ships in another module's test resources, so it is not always on the classpath.
-            // The Log4j 1.x arm used to fall back to a default configuration in exactly that case rather than
-            // failing, and supplying the default explicitly reproduces it while keeping the fallback inside this
-            // context, so that it can never be satisfied from the native arm's configuration property instead.
-            starting = new LoggerContext(MIGRATED_CONTEXT_NAME);
-            starting.start(new DefaultConfiguration());
-        } else {
-            starting = new LoggerContext(MIGRATED_CONTEXT_NAME, null, migratedConfigLocation.toURI());
-            starting.start();
-        }
-        migratedContext = starting;
+        migratedContext = migratedConfigLocation == null
+                ? new LoggerContext(MIGRATED_CONTEXT_NAME)
+                : new LoggerContext(MIGRATED_CONTEXT_NAME, null, migratedConfigLocation.toURI());
+        migratedContext.start();
     }
 
     @AfterAll
     static void cleanupClass() {
         System.clearProperty(ConfigurationFactory.CONFIGURATION_FILE_PROPERTY);
         System.clearProperty(LOGBACK_CONF);
-        if (migratedContext != null) {
-            Configurator.shutdown(migratedContext);
-            migratedContext = null;
-        }
+        // Stopping the context here is what keeps it from outliving the test: Surefire reuses no fork, but it does
+        // randomise order, so nothing may be left started behind. The call tolerates a null argument.
+        Configurator.shutdown(migratedContext);
         new File("target/testlog4j.log").deleteOnExit();
         new File("target/testlog4j2.log").deleteOnExit();
         new File("target/testlogback.log").deleteOnExit();

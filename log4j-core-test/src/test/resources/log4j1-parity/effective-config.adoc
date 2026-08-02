@@ -390,13 +390,23 @@ change to the test can be checked against it:
 * *Compare the whole of every capture,* never only a first line and never only a prefix. The whole file
   is read as bytes and decoded in one step, so the presence or absence of the terminating line separator
   is part of the comparison too.
-* *Compare rendered output and nothing else.* The test asserts on the bytes the fixture wrote; it does
-  not interrogate the built configuration, does not fetch an appender to inspect it, and does not read
-  the configuration files. Structural questions -- including whether T8's `+%5p+` width survived
-  translation, which its `DEBUG`-only capture cannot answer -- are answered by the observed
-  effective-configuration tables in this document, which is what they are for. Splitting the evidence
-  this way is deliberate: it keeps the test unable to pass by agreeing with the translation it is meant
-  to be checking.
+* *Keep rendered output as the oracle.* The committed capture is what arbitrates: the test asserts an
+  empty normalized diff against it, and no structural check may stand in for that comparison or soften
+  it. Nothing is read from the configuration *files*, because reading the translation and then asserting
+  what was read is circular.
+* *Assert the wiring as well as the text, from literals carried out of the superseded fixtures.* Rendered
+  bytes cannot see every dimension the translation had to preserve, so for every fixture the test also
+  asserts, while the context still runs: a started XML configuration rather than a fallback; a root logger
+  at `DEBUG` with additivity `true` and exactly one resolved appender reference; and a started file
+  appender writing the expected destination with `immediateFlush` false, `isAppend()` false, and a
+  resolved byte buffer of 8192. For T10 additionally: an asynchronous appender that is started, blocking,
+  of queue capacity `262144`, capturing no caller location, and delegating to `File` alone. This is what
+  catches a silent fallback, a lost asynchronous wrapper or a re-coupled flush that still happens to
+  render identical bytes -- and, for T8's `+%5p+` width, which its `DEBUG`-only capture cannot show, the
+  conversion pattern is compared character for character. Every expected value above is a literal carried
+  from the superseded fixture and cross-checked against the observed effective-configuration tables
+  below, never read back out of the translated file, so the test still cannot pass merely by agreeing with
+  the translation it is checking.
 * *Stay within this module's API surface.* `log4j-core-test` compiles at release 8, so the test may
   not use `var`, `Files.readString`, `Files.writeString`, `String.strip`, text blocks, or
   `List.of`/`Set.of`/`Map.of`. `String.strip` and `String.trim` are doubly excluded, for the

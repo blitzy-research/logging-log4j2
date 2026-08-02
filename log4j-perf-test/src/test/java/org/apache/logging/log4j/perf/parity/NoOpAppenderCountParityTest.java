@@ -96,6 +96,32 @@ class NoOpAppenderCountParityTest {
     /** Level both fixtures' events are emitted at, exactly as their benchmarks emit them. */
     private static final Level SCRIPTED_LEVEL = Level.INFO;
 
+    /** Message of the fixed-string arm, which opens the first fixture's script and is the second fixture's only event. */
+    private static final String FIXED_STRING_MESSAGE = "aaaaaaaaaaaaaaaa";
+
+    /**
+     * The eleven concatenating arms' already-rendered messages, in the order the arms declare them.
+     * <p>
+     * A count cannot see a message, so a fixture that delivered eleven other strings — or the same eleven in another
+     * order — would satisfy a count-only gate. They are stated here in their concatenated form deliberately: the
+     * parameterized form exists as a separate benchmark, so rewriting these into placeholders would erase the very
+     * comparison the concatenating arms exist to make.
+     * </p>
+     */
+    private static final String[] CONCATENATED_MESSAGES = {
+        "p1=1",
+        "p1=1, p2=2",
+        "p1=1, p2=2, p3=3",
+        "p1=1, p2=2, p3=3, p4=4",
+        "p1=1, p2=2, p3=3, p4=4, p5=5",
+        "p1=1, p2=2, p3=3, p4=4, p5=5, p6=6",
+        "p1=1, p2=2, p3=3, p4=4, p5=5, p6=6, p7=7",
+        "p1=1, p2=2, p3=3, p4=4, p5=5, p6=6, p7=7, p8=8",
+        "p1=1, p2=2, p3=3, p4=4, p5=5, p6=6, p7=7, p8=8, p9=9",
+        "p1=1, p2=2, p3=3, p4=4, p5=5, p6=6, p7=7, p8=8, p9=9, p10=10",
+        "p1=1, p2=2, p3=3, p4=4, p5=5, p6=6, p7=7, p8=8, p9=9, p10=10, p11=11",
+    };
+
     /** Root level both fixtures declare, which admits the scripted level. */
     private static final Level ROOT_LEVEL = Level.DEBUG;
 
@@ -247,6 +273,12 @@ class NoOpAppenderCountParityTest {
     private static void assertScriptedEventIdentity(final String configId, final String expectedLoggerName) {
         final List<ParityCorpus.Event> events = ParityCorpus.events(configId);
         assertFalse(events.isEmpty(), "the fixed event script assigns no events to " + configId);
+        final String[] expectedMessages = expectedMessages(configId);
+        assertEquals(
+                expectedMessages.length,
+                events.size(),
+                "number of events the corpus scripts for " + configId
+                        + "; this gate states the identity of every one of them, so the two must agree exactly");
         for (int index = 0; index < events.size(); index++) {
             final ParityCorpus.Event event = events.get(index);
             assertEquals(
@@ -260,7 +292,41 @@ class NoOpAppenderCountParityTest {
                     event.level(),
                     "level of scripted event " + (index + 1) + " of " + configId
                             + "; the level is the one the arm emits and must not be re-levelled");
+            assertEquals(
+                    expectedMessages[index],
+                    event.message(),
+                    "message of scripted event " + (index + 1) + " of " + configId
+                            + ", compared character for character in its already-rendered form");
+            assertNull(
+                    event.throwableSpec(),
+                    "throwable of scripted event " + (index + 1) + " of " + configId
+                            + "; neither counting fixture scripts a throwable, so none may appear here");
         }
+    }
+
+    /**
+     * Returns the ordered messages of one fixture: the fixed-string arm followed by the eleven concatenating arms for
+     * the fixture without location capture, and the fixed-string arm alone for the fixture with it.
+     * <p>
+     * The order is the order the arms declare, and it is stated here rather than read back from the script, so that
+     * this gate is an independent expectation instead of a restatement of the file it checks.
+     * </p>
+     *
+     * @param configId the configuration id whose scripted messages are expected
+     * @return the expected messages, in order
+     */
+    private static String[] expectedMessages(final String configId) {
+        if (LOCATION_CONFIG_ID.equals(configId)) {
+            return new String[] {FIXED_STRING_MESSAGE};
+        }
+        if (!NO_LOCATION_CONFIG_ID.equals(configId)) {
+            throw new IllegalStateException("this gate covers " + NO_LOCATION_CONFIG_ID + " and " + LOCATION_CONFIG_ID
+                    + " only, but was asked for " + configId);
+        }
+        final String[] messages = new String[CONCATENATED_MESSAGES.length + 1];
+        messages[0] = FIXED_STRING_MESSAGE;
+        System.arraycopy(CONCATENATED_MESSAGES, 0, messages, 1, CONCATENATED_MESSAGES.length);
+        return messages;
     }
 
     /**
