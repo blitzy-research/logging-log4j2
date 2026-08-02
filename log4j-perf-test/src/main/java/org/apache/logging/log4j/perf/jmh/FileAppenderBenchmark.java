@@ -80,17 +80,31 @@ public class FileAppenderBenchmark {
         // lookup altogether, keeping both arms independent inside a single JVM and leaving the Log4j 2,
         // Logback and JUL arms exactly as they were.
         final URL log4j1ConfigLocation = FileAppenderBenchmark.class.getResource("/log4j12-perf.xml");
-        log4j1Context = new LoggerContext("FileAppenderBenchmark", null, log4j1ConfigLocation.toURI());
-        log4j1Context.start();
-        // The logger name is preserved byte-for-byte: Log4j 1.x derived it from clazz.getName(), which is
-        // exactly the argument used here, so the events stay on the logger they have always used.
-        log4j1Logger = log4j1Context.getLogger(FileAppenderBenchmark.class.getName());
+        // The context is started into a local and published to the field only once every remaining setup step
+        // has succeeded, because JMH does not invoke the teardown of a state whose setup threw. The JUL handler
+        // constructed below reaches the filesystem and can therefore fail: a context assigned before that
+        // failure would stay started for the remainder of the JVM's life, holding its configuration, its file
+        // manager and its shutdown callback, with nothing left able to reach it.
+        final LoggerContext starting = new LoggerContext("FileAppenderBenchmark", null, log4j1ConfigLocation.toURI());
+        boolean armReady = false;
+        try {
+            starting.start();
+            // The logger name is preserved byte-for-byte: Log4j 1.x derived it from clazz.getName(), which is
+            // exactly the argument used here, so the events stay on the logger they have always used.
+            log4j1Logger = starting.getLogger(FileAppenderBenchmark.class.getName());
 
-        julFileHandler = new FileHandler("target/testJulLog.log");
-        julLogger = java.util.logging.Logger.getLogger(getClass().getName());
-        julLogger.setUseParentHandlers(false);
-        julLogger.addHandler(julFileHandler);
-        julLogger.setLevel(Level.ALL);
+            julFileHandler = new FileHandler("target/testJulLog.log");
+            julLogger = java.util.logging.Logger.getLogger(getClass().getName());
+            julLogger.setUseParentHandlers(false);
+            julLogger.addHandler(julFileHandler);
+            julLogger.setLevel(Level.ALL);
+            armReady = true;
+        } finally {
+            if (!armReady) {
+                Configurator.shutdown(starting);
+            }
+        }
+        log4j1Context = starting;
     }
 
     @TearDown

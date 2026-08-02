@@ -70,11 +70,25 @@ public class FileAppenderWithLocationBenchmark {
         // LoggerContext constructor skips property lookup altogether, keeping both arms independent inside a
         // single JVM and leaving the Log4j 2 and Logback arms exactly as they were.
         final URL log4j1ConfigLocation = FileAppenderWithLocationBenchmark.class.getResource("/log4j12-perfloc.xml");
-        log4j1Context = new LoggerContext("FileAppenderWithLocationBenchmark", null, log4j1ConfigLocation.toURI());
-        log4j1Context.start();
-        // The logger name is preserved byte-for-byte: Log4j 1.x derived it from clazz.getName(), which is
-        // exactly the argument used here, so the events stay on the logger they have always used.
-        log4j1Logger = log4j1Context.getLogger(FileAppenderWithLocationBenchmark.class.getName());
+        // The context is started into a local and published to the field only once this arm is fully
+        // initialised, because JMH does not invoke the teardown of a state whose setup threw: a context
+        // assigned before a later failure would stay started for the remainder of the JVM's life, holding its
+        // configuration, its file manager and its shutdown callback, with nothing left able to reach it.
+        final LoggerContext starting =
+                new LoggerContext("FileAppenderWithLocationBenchmark", null, log4j1ConfigLocation.toURI());
+        boolean armReady = false;
+        try {
+            starting.start();
+            // The logger name is preserved byte-for-byte: Log4j 1.x derived it from clazz.getName(), which is
+            // exactly the argument used here, so the events stay on the logger they have always used.
+            log4j1Logger = starting.getLogger(FileAppenderWithLocationBenchmark.class.getName());
+            armReady = true;
+        } finally {
+            if (!armReady) {
+                Configurator.shutdown(starting);
+            }
+        }
+        log4j1Context = starting;
     }
 
     @TearDown

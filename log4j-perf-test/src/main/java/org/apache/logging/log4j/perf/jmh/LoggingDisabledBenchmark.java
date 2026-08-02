@@ -51,12 +51,26 @@ public class LoggingDisabledBenchmark {
         log4j2Logger = LogManager.getLogger(FileAppenderWithLocationBenchmark.class);
         slf4jLogger = LoggerFactory.getLogger(FileAppenderWithLocationBenchmark.class);
         final URL log4j1ConfigLocation = LoggingDisabledBenchmark.class.getResource("/log4j12-perf2.xml");
-        log4j1Context = new LoggerContext("LoggingDisabledBenchmark", null, log4j1ConfigLocation.toURI());
-        log4j1Context.start();
-        // The cross-class logger name is deliberate and preserved verbatim: this benchmark has always
-        // asked for a logger named after FileAppenderWithLocationBenchmark, and renaming it would move
-        // the events onto a different logger, level and appender wiring.
-        log4j1Logger = log4j1Context.getLogger(FileAppenderWithLocationBenchmark.class.getName());
+        // The context is started into a local and published to the field only once this arm is fully
+        // initialised, because JMH does not invoke the teardown of a state whose setup threw: a context
+        // assigned before a later failure would stay started for the remainder of the JVM's life, holding its
+        // configuration, its file manager and its shutdown callback, with nothing left able to reach it.
+        final LoggerContext starting =
+                new LoggerContext("LoggingDisabledBenchmark", null, log4j1ConfigLocation.toURI());
+        boolean armReady = false;
+        try {
+            starting.start();
+            // The cross-class logger name is deliberate and preserved verbatim: this benchmark has always
+            // asked for a logger named after FileAppenderWithLocationBenchmark, and renaming it would move
+            // the events onto a different logger, level and appender wiring.
+            log4j1Logger = starting.getLogger(FileAppenderWithLocationBenchmark.class.getName());
+            armReady = true;
+        } finally {
+            if (!armReady) {
+                Configurator.shutdown(starting);
+            }
+        }
+        log4j1Context = starting;
     }
 
     @TearDown

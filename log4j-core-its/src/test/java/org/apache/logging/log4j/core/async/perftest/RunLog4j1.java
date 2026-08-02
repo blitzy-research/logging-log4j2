@@ -62,29 +62,49 @@ public class RunLog4j1 implements IPerfTestRunner {
      */
     private static final String SUPERSEDED_HIERARCHY_NAME = "superseded-default-hierarchy";
 
-    private final LoggerContext context = createContext();
+    private final LoggerContext context;
 
-    final Logger LOGGER = context.getLogger(getClass().getName());
+    final Logger LOGGER;
 
     /**
-     * Verifies, once and before any measurement is taken, that the hierarchy this runner came up on admits the
-     * {@code info} events its timed methods emit. A disabled logger would let both tests complete and report a
-     * throughput or latency figure for a level check rather than for logging, which is a silent measurement error; an
-     * exception here is the loud alternative.
+     * Builds this runner's context, verifies that the hierarchy it came up on admits the {@code info} events the timed
+     * methods emit, and only then takes ownership of either. A disabled logger would let both tests complete and report
+     * a throughput or latency figure for a level check rather than for logging, which is a silent measurement error; the
+     * exception below is the loud alternative.
+     * <p>
+     * Construction is transactional, and it has to be. The rejection is raised <em>after</em> the context has started,
+     * and a constructor that throws yields no instance, so nothing would ever be able to call {@link #shutdown()} on
+     * the context it started: it would keep its configuration, its appenders and their managers, and its shutdown
+     * callback alive for the rest of the JVM's life. Everything therefore happens through locals, the two final fields
+     * are assigned only once the hierarchy has been accepted, and any failure on the way - including one raised by the
+     * start itself - releases whatever was started before it leaves.
+     * </p>
      *
      * @throws IllegalStateException if the configured hierarchy does not admit {@code info}
      */
     public RunLog4j1() {
-        if (!LOGGER.isInfoEnabled()) {
-            throw new IllegalStateException("Logger '" + LOGGER.getName() + "' is not enabled for "
-                    + Level.INFO
-                    + " under configuration '"
-                    + context.getConfiguration().getName()
-                    + "', so the measurements below would time a disabled call rather than logging. Point "
-                    + ConfigurationFactory.CONFIGURATION_FILE_PROPERTY
-                    + " at a resolvable configuration whose root logger admits "
-                    + Level.INFO
-                    + ".");
+        final LoggerContext starting = createContext();
+        boolean runnerReady = false;
+        try {
+            final Logger logger = starting.getLogger(getClass().getName());
+            if (!logger.isInfoEnabled()) {
+                throw new IllegalStateException("Logger '" + logger.getName() + "' is not enabled for "
+                        + Level.INFO
+                        + " under configuration '"
+                        + starting.getConfiguration().getName()
+                        + "', so the measurements below would time a disabled call rather than logging. Point "
+                        + ConfigurationFactory.CONFIGURATION_FILE_PROPERTY
+                        + " at a resolvable configuration whose root logger admits "
+                        + Level.INFO
+                        + ".");
+            }
+            context = starting;
+            LOGGER = logger;
+            runnerReady = true;
+        } finally {
+            if (!runnerReady) {
+                Configurator.shutdown(starting);
+            }
         }
     }
 
@@ -93,18 +113,31 @@ public class RunLog4j1 implements IPerfTestRunner {
      * superseded default hierarchy when it cannot. The property is read once, here, and only to honour what the driver
      * forwarded; the context itself is handed either a resolved location or a finished configuration, so it never
      * consults a property of its own and cannot be redirected by one after the fact.
+     * <p>
+     * Either a started context is returned or nothing is left running: a start that fails part-way can already have
+     * opened appenders and registered their managers, and the caller has no reference with which to close them, so this
+     * method closes them itself before the failure leaves.
+     * </p>
      *
      * @return a started context
      */
     private static LoggerContext createContext() {
         final URI configLocation = resolveConfigurationLocation();
-        final LoggerContext context;
-        if (configLocation == null) {
-            context = new LoggerContext(CONTEXT_NAME);
-            context.start(supersededDefaultHierarchy());
-        } else {
-            context = new LoggerContext(CONTEXT_NAME, null, configLocation);
-            context.start();
+        final LoggerContext context = configLocation == null
+                ? new LoggerContext(CONTEXT_NAME)
+                : new LoggerContext(CONTEXT_NAME, null, configLocation);
+        boolean started = false;
+        try {
+            if (configLocation == null) {
+                context.start(supersededDefaultHierarchy());
+            } else {
+                context.start();
+            }
+            started = true;
+        } finally {
+            if (!started) {
+                Configurator.shutdown(context);
+            }
         }
         return context;
     }

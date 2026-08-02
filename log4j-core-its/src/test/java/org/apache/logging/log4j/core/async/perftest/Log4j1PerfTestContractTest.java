@@ -30,6 +30,7 @@ import java.nio.file.Path;
 import java.util.List;
 import java.util.Locale;
 import org.apache.logging.log4j.Level;
+import org.apache.logging.log4j.core.appender.AbstractManager;
 import org.apache.logging.log4j.core.appender.CountingNoOpAppender;
 import org.apache.logging.log4j.core.config.Configuration;
 import org.apache.logging.log4j.core.config.ConfigurationFactory;
@@ -78,6 +79,12 @@ class Log4j1PerfTestContractTest {
     private static final String PROBE_FIXTURE_NAME = "RunLog4j1ProbeFixture";
 
     private static final String PROBE_APPENDER_NAME = "Counter";
+
+    /**
+     * Name of the appender used by the one fixture that writes to a file. A file appender registers a manager under its
+     * destination, which is the only handle a test has on a context whose constructor threw before returning it.
+     */
+    private static final String PROBE_FILE_APPENDER_NAME = "Destination";
 
     /**
      * Cleared after every test, whether the test set it or not, so that no test can observe a selector left behind by
@@ -220,10 +227,19 @@ class Log4j1PerfTestContractTest {
     void runnerRefusesAConfigurationThatWouldDisableTheEventsItTimes(@TempDir final Path tempDir) throws Exception {
         // The failure mode this guards against is silent: a runner whose info events are all disabled still completes
         // both tests and still reports a figure, for a level check rather than for logging.
-        final Path fixture = writeProbeFixture(tempDir, Level.ERROR);
+        //
+        // The rejected fixture writes to a file rather than to the counting appender, because the rejection is raised
+        // after the context has started and a constructor that throws hands back no instance: a file manager registered
+        // under the destination is the only handle left with which to observe whether that context is still running.
+        final Path destination = tempDir.resolve("rejected-arm.log");
+        final Path fixture = writeProbeFixture(tempDir, Level.ERROR, destination);
         System.setProperty(
                 ConfigurationFactory.CONFIGURATION_FILE_PROPERTY,
                 fixture.toAbsolutePath().toString());
+        assertFalse(
+                AbstractManager.hasManager(destination.toString()),
+                "precondition: no manager may be registered for " + destination + " before the runner is built");
+
         final IllegalStateException failure = assertThrows(IllegalStateException.class, RunLog4j1::new);
         assertTrue(
                 failure.getMessage().contains(RunLog4j1.class.getName()),
@@ -231,6 +247,16 @@ class Log4j1PerfTestContractTest {
         assertTrue(
                 failure.getMessage().contains(PROBE_FIXTURE_NAME),
                 "the failure must name the configuration that disabled it, but was: " + failure.getMessage());
+
+        // The rejection really does come after the start - the appender opened its destination - so the release
+        // asserted below is a release of something that was running, not a statement about a context never started.
+        assertTrue(
+                Files.isRegularFile(destination),
+                destination + " must exist: the rejected configuration starts before it is rejected");
+        assertFalse(
+                AbstractManager.hasManager(destination.toString()),
+                "a rejected runner must release the context it started, unregistering the manager for " + destination
+                        + "; nothing else can, because the failed constructor returned no instance to shut down");
     }
 
     /**
@@ -242,14 +268,37 @@ class Log4j1PerfTestContractTest {
      * @return the written file
      */
     private static Path writeProbeFixture(final Path tempDir, final Level rootLevel) throws Exception {
+        return writeProbeFixture(tempDir, rootLevel, null);
+    }
+
+    /**
+     * Writes the probe fixture, optionally directing it at a file instead of at the counting appender. One fixture
+     * writer serves both shapes so that the fixture's name, its root-level spelling and its single-appender wiring stay
+     * stated in one place; only the appender element differs, and it differs because the two shapes answer different
+     * questions - a counting appender reports how many events arrived, a file appender leaves a manager registered under
+     * its destination that outlives the object graph the context belongs to.
+     *
+     * @param tempDir the directory to write into
+     * @param rootLevel the level to give the root logger
+     * @param destination the file to write to, or {@code null} to use the counting appender
+     * @return the written file
+     */
+    private static Path writeProbeFixture(final Path tempDir, final Level rootLevel, final Path destination)
+            throws Exception {
+        final String appender = destination == null
+                ? "    <CountingNoOp name=\"" + PROBE_APPENDER_NAME + "\"/>\n"
+                : "    <File name=\"" + PROBE_FILE_APPENDER_NAME + "\" fileName=\"" + destination + "\">\n"
+                        + "      <PatternLayout><Pattern>%m%n</Pattern></PatternLayout>\n"
+                        + "    </File>\n";
+        final String appenderName = destination == null ? PROBE_APPENDER_NAME : PROBE_FILE_APPENDER_NAME;
         final String xml = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
                 + "<Configuration name=\"" + PROBE_FIXTURE_NAME + "\">\n"
                 + "  <Appenders>\n"
-                + "    <CountingNoOp name=\"" + PROBE_APPENDER_NAME + "\"/>\n"
+                + appender
                 + "  </Appenders>\n"
                 + "  <Loggers>\n"
                 + "    <Root level=\"" + rootLevel.name().toLowerCase(Locale.ROOT) + "\">\n"
-                + "      <AppenderRef ref=\"" + PROBE_APPENDER_NAME + "\"/>\n"
+                + "      <AppenderRef ref=\"" + appenderName + "\"/>\n"
                 + "    </Root>\n"
                 + "  </Loggers>\n"
                 + "</Configuration>\n";

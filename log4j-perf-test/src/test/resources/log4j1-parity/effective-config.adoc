@@ -72,7 +72,7 @@ needs no declaration. The module build file carries the edits that enable the co
 consume this corpus -- but that file belongs to its own owner and is recorded here only as the context
 that makes the tests runnable at all.
 
-.The four build-file conditions these tests depend on
+.The five build-file conditions these tests depend on
 [cols="2,4",options="header"]
 |===
 | Condition | Why it is required
@@ -98,6 +98,14 @@ that makes the tests runnable at all.
   execution to `+<version>[1.8, 9)</version>+`. Under that pin these tests would be loaded by a Java 8
   toolchain and fail at class-load time. The module's own `+<surefire.jdkToolchain>[9, )+` property had
   no consumer before this change; the override is what finally gives it one
+
+| a second surefire execution, `migrated-arm-setup-failure`, runs the setup-failure proof on its own with
+  `failIfNoTests` set and a single fork, and `default-test` excludes that one class
+| `default-test` inherits `+forkCount=1C+` with `+reuseForks=false+`, so its classes run in parallel forks
+  sharing one working directory. The proof occupies a destination on the filesystem and boots the same
+  `+target/testlog4j.log+` the golden-master cases delete before booting and then compare byte for byte, so
+  running it beside them would race them. Restating Surefire's own `+**/*$*+` exclusion is required, because
+  naming any exclusion replaces the default list
 |===
 
 Two API-surface consequences follow from that release level and are honoured by the consuming tests:
@@ -106,7 +114,10 @@ lower surface its module compiles against. This directory contains exactly eight
 
 *State of the consuming tests.* The corpus is complete and self-sufficient, and the three Java
 classes that read it now exist in
-`log4j-perf-test/src/test/java/org/apache/logging/log4j/perf/parity/`:
+`log4j-perf-test/src/test/java/org/apache/logging/log4j/perf/parity/`. They are not quite the whole of the
+module's test tree: a fourth class, `MigratedArmSetupFailureTest`, sits beside the benchmarks in
+`+.../perf/jmh/+`, reads nothing from this corpus and is documented under "`Failure paths are closed as
+well`" below, where the lifecycle contract it holds is set out.
 
 [cols="1,3"]
 |===
@@ -117,12 +128,17 @@ classes that read it now exist in
   events into an isolated logger context, and applies the four-token normalizer
 
 | `Log4j1ConfigParityTest`
-| five independent cases, one per file-based fixture T1-T5, each comparing the whole normalized
-  capture with its committed baseline and nothing else
+| exactly five independent golden-master cases, one per file-based fixture T1-T5, and no sixth. Each
+  compares the whole normalized capture with its committed baseline, and each first asserts that the
+  fixture it booted is the intended one -- including its configured conversion pattern, character for
+  character, which is what carries the `+%5p+` field width that no capture in this corpus can see. See
+  "`The padding width, and the two claims it needs`"
 
 | `NoOpAppenderCountParityTest`
 | the custom-component gate: it resolves the `NoOp` appender by name under `ASYNC` for T6 and T7 and
-  compares the delivered event count with the recorded counts
+  compares the delivered event count with the recorded counts. Before either case reads them, those
+  counts are held to the committed event script -- each recorded number must equal the number of records
+  the script replays into that fixture -- and to the exact bytes of the file they were read from
 |===
 
 Every statement below about what a consuming test does therefore describes delivered code. The corpus
@@ -1710,12 +1726,42 @@ the appender graph off the state that JMH creates and tears down.
 ==== Failure paths are closed as well
 
 A context started and then abandoned would stay started for the remainder of the JVM's life, so every
-place in this migration that hands a started context to a field outliving the call closes that gap. The
-corpus harness and the peer corpus's test both start their context behind a `started` flag and stop it in a
-`finally` block if the start threw, so a failed boot leaves nothing running; the seventh class publishes
-its static field only once its context has started, so no arm can observe a half-configured one. The six
-benchmark arms need no such guard: JMH does not invoke the teardown of a state whose setup threw, and the
-state object itself -- context field and all -- is discarded with the failed trial rather than reused.
+place in this migration that starts one closes that gap the same way: build outside the guard, because
+construction starts nothing; start, obtain and validate inside it; publish only afterwards; and stop the
+local in a `finally` block whenever the arm did not become ready. A privately constructed context is
+absent from every context registry -- that absence is what keeps it from displacing the native arm -- so
+the local is the only reference to it in the process, and a failure that escapes with the local still
+started leaks a running context that nothing can afterwards reach.
+
+*All six benchmark classes take that guard,* and the reasoning that they need none does not hold. It is
+true that JMH does not invoke the teardown of a state whose setup threw and discards the state object with
+the failed trial, but discarding the *reference* does not stop the *context*: the configuration, the file
+manager and the shutdown callback it started go on living in the JVM, and any state constructed afterwards
+in that JVM starts a second context over the same destination. Each `@Setup` therefore starts its context
+into a local
+behind an `armReady` flag, acquires its logger from it, and assigns the class's context field only after
+both have succeeded; a `finally` block calls `Configurator.shutdown` on the local otherwise.
+
+*That is proved by execution, not asserted.* `MigratedArmSetupFailureTest`, in the benchmark package,
+drives two of the classes through a genuine post-start setup failure: a non-empty directory planted at the
+`java.util.logging` destination those arms open after their migrated arm is up, which makes the handler
+constructor throw where no earlier step can. For each class it asserts that setup threw, that the migrated
+destination *was* created -- so the context really had started and really did own a file manager, without
+which the release assertion would be vacuous -- that the manager is afterwards unregistered, that the
+context field was never published, and that the teardown then runs without throwing and registers nothing.
+Reverting either class to the unguarded shape fails it by name on the manager assertion. It runs on every
+build of the module through a surefire execution of its own with `failIfNoTests` set, excluded from the
+default execution so that it can never race the golden-master cases over the shared destination, and
+reports `+Tests run: 2, Failures: 0, Errors: 0, Skipped: 0+`.
+
+The corpus harness and the peer corpus's test start their context behind the same kind of flag and stop it
+in a `finally` block if the start threw, so a failed boot leaves nothing running. The seventh class takes
+the guard one step further, because it also sets two selector properties for its sibling arms before it
+starts anything: it publishes its static field only once its context has both started *and* been validated
+-- the validation takes the context as an argument rather than reading the field, precisely so that it runs
+before publication -- and on any failure it stops the local and withdraws both properties, so a failed
+setup leaves neither a running context nor a global property behind. Its teardown assertions are unchanged
+by that, and remain the record of what a completed run left behind.
 
 The mechanism is also *selector-independent*, which is worth stating because it is the reason one
 benchmark's asynchronous-context-selector overrides could be left *exactly* as they were. A privately
@@ -1769,13 +1815,17 @@ of its two deliberate oddities.
 field that is assigned inside the class-level setup method rather than in a static initializer, so that
 the assignment happens *after* the selector properties for the sibling arms are set and cannot race an
 early class-load. Setup resolves the fixture from the classpath and starts the context on it -- or, when it
-does not resolve, on a configuration built in code, as the next paragraphs describe. Teardown clears the
-properties it set, shuts the context down through the same `Configurator.shutdown(ctx)` call the six
-benchmark classes use, and schedules the three log files for deletion. The context is given an explicit
-name, so it is identifiable in diagnostics rather than anonymous. Setup and teardown each assert what they
-did: that both selector properties are in force after being set and cleared after being cleared, and that
-the context is started before the measurement and stopped after it. Teardown asserts *after* performing its
-work, so a failing assertion reports an incomplete cleanup instead of causing one.
+does not resolve, on a configuration built in code, as the next paragraphs describe. Both starts run under
+the guard described under "`Failure paths are closed as well`" above: the context is started into a local,
+validated while it is still only a local, and assigned to the static field last, and any failure stops that
+local and withdraws both selector properties, so a setup that does not complete leaves neither a running
+context nor a global property behind. Teardown clears the properties it set, shuts the context down through
+the same `Configurator.shutdown(ctx)` call the six benchmark classes use, and schedules the three log files
+for deletion. The context is given an explicit name, so it is identifiable in diagnostics rather than
+anonymous. Setup and teardown each assert what they did: that both selector properties are in force after
+being set and cleared after being cleared, and that the context is started before the measurement and
+stopped after it. Teardown asserts *after* performing its work, so a failing assertion reports an incomplete
+cleanup instead of causing one.
 
 *It also handles the missing-resource case explicitly*, which the six benchmarks do not need to -- and in
 this repository that case is the one that actually occurs. `log4j12-perf.xml` is owned by
@@ -1935,6 +1985,14 @@ built-hierarchy branch and letting the default configuration stand produces exac
 `+Logger 'org.apache.logging.log4j.core.async.perftest.RunLog4j1' is not enabled for INFO under
 configuration 'Default@...'+`.
 
+*And it is loud without leaking.* A constructor that throws returns no instance, so nothing can afterwards
+call the runner's `shutdown` -- which makes the rejection the one path where a started context would be
+unreachable for the life of the child JVM. Construction is therefore transactional in the same shape as the
+guards above: the context is started, the logger obtained and the hierarchy validated through locals, the
+two `final` fields are assigned only once the validation has passed, and a `finally` block calls
+`Configurator.shutdown` on the local otherwise. The started-context helper is guarded the same way, so a
+start that throws part-way leaves nothing running either.
+
 *An always-running probe holds the contract.* `Log4j1PerfTestContractTest`, in the same package, runs on
 every build of that module through a surefire execution of its own with `failIfNoTests` set, and reports
 `+Tests run: 5, Failures: 0, Errors: 0, Skipped: 0+`. It asserts, for *both* the synchronous and the
@@ -1944,7 +2002,17 @@ of scope for this migration -- is still forwarded unchanged, and that the child 
 runner. It then asserts the runner's two branches directly: with no name forwarded, a null configuration
 source, a root level of `DEBUG`, an empty root appender map and an `info` level that is enabled; with a
 resolvable name, that the configuration came from that file and that an event emitted through the runner
-increments a counting appender by exactly one. A fifth case asserts the constructor's refusal.
+increments a counting appender by exactly one.
+
+A fifth case asserts the refusal itself, and asserts it *twice over*: that the constructor throws, naming
+the logger and the level in its message, and that the rejected context was *released*. The release half is
+what makes the case a lifecycle gate rather than a message gate. It points the probe fixture at a
+destination of its own inside the test's temporary directory, asserts before the attempt that no manager is
+registered for that destination, and asserts afterwards that the destination file *was* created -- so the
+context really had started and really did own a manager -- and that the manager is nonetheless gone.
+Reverting the constructor to its unguarded form fails exactly that assertion, with the message *a rejected
+runner must release the context it started ... nothing else can, because the failed constructor returned no
+instance to shut down*, while the two message assertions beside it stay green.
 
 == Why `%L` is normalized, and why it is the only difference tolerated
 
@@ -2122,18 +2190,48 @@ is character-for-character the pattern the superseded fixture declared, and the 
 row of each effective-configuration table records the same comparison from `-Dlog4j2.debug` boot output.
 A width deleted in translation fails both immediately while rendering identical bytes.
 
-*Claim two -- the width means the same thing in both generations -- is settled by rendering,* through the
-cross-generation measurement in the subsection below, which does not depend on any event this corpus
-replays.
+*Claim two -- the width means the same thing in both generations -- is settled by rendering, and that
+rendering is recorded evidence rather than executable coverage.* It is the cross-generation measurement in
+the subsection below, and this document is careful about its standing rather than dressing it up.
 
-That measurement is also carried by a live case of the consuming test rather than by this document alone.
-`Log4j1ConfigParityTest.paddedLevelFieldKeepsItsMinimumWidth` boots T1's fixture in a context of its own,
-takes the conversion pattern that fixture configures, and renders a level shorter than the field through
-`+%5p+` and through a bare `+%p+` in isolation: the first must right-align it in five columns, the second
-must not pad it, and at exactly the field width the two must render identically -- which is precisely why
-no capture in this corpus can carry the evidence. That case replays no scripted event, writes to no
-destination and reads no baseline, so *supplementary evidence sits beside the oracle and never inside
-it*: the golden master keeps its twenty-one benchmark-derived events and gains no fabricated one.
+*Both halves of that measurement are recorded, and neither is a live gate.* The superseded half -- what the
+genuine `log4j:log4j:1.2.17` layout rendered at each level -- was measured against that artefact while it
+was still on the class path, and the dependency removal made it *unrepeatable*: the table below is the whole
+of it, and nothing in the build can re-derive it. The migrated half was measured beside it, at the same
+time, so that the two columns could be compared at all. Re-deriving the migrated column alone would prove
+nothing that needs proving, because the column it must agree with is gone; so no test asserts it, and this
+document does not claim one does.
+
+That is a deliberate boundary, not a gap, and the reason is the division of labour this corpus is built
+on. *A rendered-output gate in this corpus consumes recorded bytes; it never computes the bytes it then
+checks.* A case that rendered a level through `+%5p+` and asserted the result would be asserting a value
+*this project computed*, against an expectation *this project also computed* -- it would restate the
+padding rule rather than test it, while adding a sixth case to a class whose contract is exactly five
+independent T1-T5 output cases. The width claim that a build genuinely can hold is claim one, and the
+build does hold it, live, on every `+%5p+` fixture.
+
+[NOTE]
+.What the executable coverage actually is, and that it is not vacuous
+====
+Claim one is carried by the configured-pattern comparison inside each golden-master case, and that gate was
+tested by deliberately breaking the thing it guards. Dropping the width from T1's fixture alone -- changing
+its `+<Pattern>+` from `+%d %5p [%t] …+` to `+%d %p [%t] …+` and touching no test code -- fails exactly
+one of the five cases, by name and by character:
+
+[source,text]
+----
+Log4j1ConfigParityTest.log4j12PerfRendersItsBaseline:230->assertSharedFileFixture:374->assertFileAppender:515
+conversion pattern of appender TestLogfile, compared character for character
+  ==> expected: <%d %5p [%t] %c{1} %X{transactionId} - %m%n>
+       but was: <%d %p [%t] %c{1} %X{transactionId} - %m%n>
+----
+
+The complementary mutation shows why that gate is the *only* one that can see it. Dropping the width from
+T1's and T2's fixtures *and* from the expected pattern the cases compare against -- that is, disabling the
+structural gate at the same time as the fixture -- leaves all five cases *passing*: T1's capture still
+matches its committed baseline byte for byte and T2's is still byte-empty. The captured bytes are genuinely
+blind to the field width; the configured-pattern comparison is not.
+====
 
 [NOTE]
 .Why a shorter-levelled event was not added to close claim one by rendering instead

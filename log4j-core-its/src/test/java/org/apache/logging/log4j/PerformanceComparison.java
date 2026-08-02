@@ -75,9 +75,11 @@ class PerformanceComparison {
      * configuration itself: it is always started from a configuration it is <em>handed</em> directly - the migrated
      * fixture's own location when that fixture is on the classpath, and the explicitly built hierarchy returned by
      * {@link #supersededDefaultHierarchy()} when it is not. Neither path consults a configuration property, so neither
-     * arm can displace the other. Assigned by {@link #setupClass()}, which JUnit runs before it instantiates this class, so the instance
-     * initializer below always observes a started context, and stopped again by {@link #cleanupClass()} so that no
-     * started context outlives the test.
+     * arm can displace the other. Assigned by {@link #setupClass()}, which JUnit runs before it instantiates this
+     * class, and assigned only once that setup has both started the context and validated it - a setup that fails
+     * either step releases the context it started and publishes nothing here - so the instance initializer below
+     * always observes a started, validated context. Stopped again by {@link #cleanupClass()} so that no started
+     * context outlives the test.
      */
     private static LoggerContext migratedContext;
 
@@ -142,17 +144,37 @@ class PerformanceComparison {
         // location, reads no configuration property, and an unresolvable fixture surfaces as a configured context
         // rather than as an exception thrown out of class setup.
         migratedConfigLocation = PerformanceComparison.class.getResource("/" + LOG4J_CONFIG);
-        final LoggerContext starting;
-        if (migratedConfigLocation == null) {
-            starting = new LoggerContext(MIGRATED_CONTEXT_NAME);
-            starting.start(supersededDefaultHierarchy());
-        } else {
-            starting = new LoggerContext(MIGRATED_CONTEXT_NAME, null, migratedConfigLocation.toURI());
-            starting.start();
+        // Constructing a context starts nothing, so it needs no guard; everything after it does. A started context
+        // owns a configuration, whatever appenders that configuration declares and a shutdown callback, and this one
+        // is deliberately absent from every context registry - that absence is what keeps it from displacing the
+        // native arm, and it also means the local below is the only reference to it in the process. So if either
+        // start throws, or if the validation that follows rejects what came up, letting the failure leave this method
+        // with the local still started would leak a running context for the lifetime of the fork, with nothing left
+        // able to reach it. Both starts and the validation therefore run under a guard that releases the context and
+        // withdraws the two properties this method set, and the static field is published only once the arm has both
+        // started and been validated - so a failed setup leaves exactly nothing behind.
+        final LoggerContext starting = migratedConfigLocation == null
+                ? new LoggerContext(MIGRATED_CONTEXT_NAME)
+                : new LoggerContext(MIGRATED_CONTEXT_NAME, null, migratedConfigLocation.toURI());
+        boolean armReady = false;
+        try {
+            if (migratedConfigLocation == null) {
+                starting.start(supersededDefaultHierarchy());
+            } else {
+                starting.start();
+            }
+            assertMigratedArmIsConfigured(starting);
+            armReady = true;
+        } finally {
+            if (!armReady) {
+                Configurator.shutdown(starting);
+                System.clearProperty(ConfigurationFactory.CONFIGURATION_FILE_PROPERTY);
+                System.clearProperty(LOGBACK_CONF);
+            }
         }
-        // Published only once the context is started, so the instance initializer cannot observe a partial one.
+        // Published only once the context is started and validated, so the instance initializer cannot observe a
+        // partial one and a failed setup publishes nothing at all.
         migratedContext = starting;
-        assertMigratedArmIsConfigured();
     }
 
     /**
@@ -175,10 +197,17 @@ class PerformanceComparison {
      * {@link #LOG4J_CONFIG} on the classpath is a property of the module's test scope, not of this class, so it is
      * never asserted. What is asserted in both branches is that the configuration in force is the one this class
      * chose, and that its root logger admits DEBUG - the level the timed calls below use.
+     * <p>
+     * The context is taken as an argument rather than read from {@link #migratedContext}, because these assertions run
+     * <em>before</em> that field is published: an arm that fails them is released rather than measured, so it must
+     * never have been visible to anything.
+     * </p>
+     *
+     * @param context the started context {@link #setupClass()} means to publish, still held only in its local
      */
-    private static void assertMigratedArmIsConfigured() {
-        assertTrue(migratedContext.isStarted(), "the migrated arm's context must be started before it is measured");
-        final Configuration configuration = migratedContext.getConfiguration();
+    private static void assertMigratedArmIsConfigured(final LoggerContext context) {
+        assertTrue(context.isStarted(), "the migrated arm's context must be started before it is measured");
+        final Configuration configuration = context.getConfiguration();
         assertNotNull(configuration, "the migrated arm's context must hold a configuration");
         final ConfigurationSource source = configuration.getConfigurationSource();
         if (migratedConfigLocation == null) {
