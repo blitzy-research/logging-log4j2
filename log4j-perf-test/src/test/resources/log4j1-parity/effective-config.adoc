@@ -1708,9 +1708,8 @@ true that JMH does not invoke the teardown of a state whose setup threw and disc
 the failed trial, but discarding the *reference* does not stop the *context*: the configuration, the file
 manager and the shutdown callback it started go on living in the JVM, and any state constructed afterwards
 in that JVM starts a second context over the same destination. Each `@Setup` therefore starts its context
-into a local
-behind an `armReady` flag, acquires its logger from it, and assigns the class's context field only after
-both have succeeded; a `finally` block calls `Configurator.shutdown` on the local otherwise.
+into a local behind an `armReady` flag, acquires its logger from it, and assigns the class's context field
+only after both have succeeded; a `finally` block calls `Configurator.shutdown` on the local otherwise.
 
 *Where that guard is.* The shape is uniform and readable in all six classes: the context is built and
 started into a local, the logger is taken from that local, the class's field is assigned only once both
@@ -2261,35 +2260,47 @@ the committed baseline -- and of the staged blob -- rather than trusted to a tex
 
 === How that byte and the repository's whitespace gate are reconciled
 
-A byte-exact capture and a repository-wide whitespace check are both right, and they collide. The
-repository's standard check reports a trailing blank as an error, which is correct for source text and
-wrong for rendered output; and the capture may not be "`cleaned`", because it may only ever be re-taken
-by replaying the superseded runtime.
+A byte-exact capture and a repository-wide whitespace check are both right, and they collide. Git's own
+`git diff --check` reports a trailing blank as an error, which is correct for source text and wrong for
+rendered output; and the capture may not be "`cleaned`", because it may only ever be re-taken by
+replaying the superseded runtime.
 
-The collision is resolved in repository metadata rather than in the payload. The root `.gitattributes`
-carries, for the capture payloads of this corpus and its sibling only:
+*The collision is resolved in favour of the payload, and the consequence is disclosed here rather than
+suppressed.* The byte stays, nothing in the repository exempts it, and `git diff --check` over the whole
+change therefore *fails, exiting 2*. It names line 1 of the three captures whose pattern ends `+%m %n+`:
 
 ----
-/log4j-perf-test/src/test/resources/log4j1-parity/*.baseline.txt whitespace=-blank-at-eol
-/log4j-core-test/src/test/resources/log4j1-parity/*.baseline.txt whitespace=-blank-at-eol
+log4j-core-test/src/test/resources/log4j1-parity/perf-log4j12-async.baseline.txt:1: trailing whitespace.
+log4j-core-test/src/test/resources/log4j1-parity/perf-log4j12.baseline.txt:1: trailing whitespace.
+log4j-perf-test/src/test/resources/log4j1-parity/perf-log4j12-async.baseline.txt:1: trailing whitespace.
 ----
 
-The scope is deliberately as small as the problem:
+Git echoes each offending line beneath its heading; those echoed lines are elided above, because *this*
+document carries no trailing whitespace on any line of its own. Three facts bound the outcome, and each
+was measured rather than assumed:
 
-* it names the two capture directories explicitly and matches only `+*.baseline.txt+` inside them, so
-  the event script, these tables and every source file in both modules keep the default checks --
-  confirmed with `git check-attr whitespace`, which reports `unspecified` for all of them;
-* it switches off *one* check, `blank-at-eol`. The other whitespace checks that apply to these files,
-  including `blank-at-eof` and `space-before-tab`, stay in force, so a genuinely damaged capture is
-  still caught;
-* it changes *no byte of any capture*. With the rule in place, `git diff --check` over the whole change
-  -- worktree and staged -- reports nothing, while an octal dump of both the file and its staged blob
-  still ends `+g   <space>   \n+`.
+* *No build gate is affected, and no continuous-integration job runs that check.* Spotless's `formats`
+  section covers `+src/**/*.xml+` -- excluding `+src/changelog/**/*.xml+` -- and
+  `+src/**/*.properties+`, while its `java` section covers `+src/main/java+`, `+src/test/java+` and the
+  documentation examples: no section covers `+*.txt+` or `+*.adoc+`. Apache RAT excludes `+**/*.txt+`
+  and, through this repository's own configuration, `+src/test/resources/**/*+`. Both goals pass over
+  both modules with the byte present, and no workflow file and no repository hook invokes
+  `git diff --check` or any other whitespace check.
+* *The three files are named here so that the report is expected rather than surprising.* Two belong to
+  the sibling corpus's module and one to this one, and they are the only three files in either corpus
+  that carry the byte -- the remaining nine, seven payload files and both documents, are free of it. A
+  fourth file in that report is therefore a defect, not more of the same.
+* *No capture byte was altered to quieten the report.* An octal dump of both the file and its staged
+  blob still ends `+g   <space>   \n+`.
 
-The alternative the review offered -- re-encoding the captures into some whitespace-safe
-representation -- was rejected: it would make the committed artefact a *transformation* of the rendered
-output instead of the rendered output itself, and the value of a golden master is that it is the thing
-it claims to be.
+Two remedies were considered, and both were rejected. *Exempting the captures in `.gitattributes`* -- a
+`+whitespace=-blank-at-eol+` rule scoped to `+*.baseline.txt+` under the two corpus directories --
+would silence the report without touching a byte, but the root `.gitattributes` is not among the files
+this change is permitted to modify, and a corpus may not widen its own change surface in order to make
+its own evidence tidier. *Re-encoding the captures* into some whitespace-safe representation was
+rejected on the merits: it would make the committed artefact a *transformation* of the rendered output
+instead of the rendered output itself, and the value of a golden master is that it is the thing it
+claims to be.
 
 Both effects were observed identically in both generations. They are evidence of fidelity, not noise.
 
@@ -2629,6 +2640,123 @@ equality alone is not.
   What changed is the *selector key*, and only where a fixture is selected by property at all
 |===
 
+=== Disclosures: five properties of the delivered change, recorded rather than left to be found
+
+None of the following is a defect in a translated fixture and none of them moves a rendered byte. Each
+is a property of the change as delivered that a reader would otherwise have to discover, and each is
+recorded with the measurement that establishes it and the authority that settles it.
+
+. *The test-fixtures dependency this module gained is declared and not imported.* The plan mandates a
+  `test`-scope dependency on the Log4j 2 Core test-fixtures artefact for the new gates, and the gates as
+  delivered do not reference it: the only non-JDK imports across the three consumers are the logging API
+  (`Level`, `LogBuilder`, `Logger`), Log4j 2 Core (`LoggerContext`, `Configurator`, `Appender` and the
+  counting no-op appender) -- both already `compile`-scope in this module -- and JUnit Jupiter. A search
+  of this module's test sources for the fixtures package returns *nothing*. The footprint is measurable:
+  the fixtures artefact carries *fifty* further artefacts onto a module that had no test class path at
+  all before this change, among them `spring-core 5.3.39`, `guava 33.4.8-jre`, `maven-core 3.9.10`,
+  `mockito-core 4.11.0`, `commons-io 2.19.0`, `commons-lang3 3.18.0`,
+  `java-allocation-instrumenter 3.3.4`, `awaitility 4.3.0`, `assertj-core 3.27.3`, `junit:junit 4.13.2`
+  and `hamcrest 3.0`. The declaration is *kept*: the plan requires it, and this corpus holds no
+  authority to overrule the plan. Nothing in the build depends on the question either way -- no
+  dependency-analysis goal is bound in any module, so the declaration neither breaks a gate nor is
+  vindicated by one. What is no longer left implicit is that its stated reason, fixtures needed by the
+  gates, is not exercised by the gates as delivered.
+. *Test compilation emits one new warning, and it is the counterpart of one that already existed.*
+  Enabling tests in this module makes the inherited benchmark annotation processor run over the test
+  sources as well, where it finds nothing to generate:
++
+----
+[WARNING] No processor claimed any of these annotations: /org.junit.jupiter.api.AfterEach,
+/org.junit.jupiter.api.DisplayName,/org.junit.jupiter.api.Test,/org.junit.jupiter.api.BeforeEach
+----
++
+It cannot have existed before, because test compilation was skipped. It is benign, and the same wiring
+already emits the same warning for *main* compilation over the persistence and analysis annotations this
+module's main sources carry, so nothing about the condition is new but its second occurrence. Both halves
+of the plan's prediction were verified: the benchmark descriptor is generated for the main sources
+(`target/classes/META-INF/BenchmarkList`, 128,614 bytes) and *not* for the test sources
+(`target/test-classes/META-INF/` holds only `DEPENDENCIES`, `LICENSE` and `NOTICE`), because no gate
+carries a benchmark annotation. The wiring is left exactly as the plan specifies.
+. *The source-level oracle has eight occurrences, not one.* The plan's definition of done names a single
+  known exception, a reflective class load by string literal. A scan of every tracked Java file outside
+  the retained bridge module finds *eight* occurrences of the superseded package's dotted name, in seven
+  files. Every one is *unchanged from the base commit*, and this change *reduced* the total from nine to
+  eight by making the layout-template consumer emit natively:
++
+[cols="4,1,4",options="header"]
+|===
+| File | Line | What it is
+
+| `log4j-api/src/main/java/org/apache/logging/log4j/util/internal/package-info.java`
+| 31
+| a string literal in a package annotation; excluded by the plan's scope section
+
+| `log4j-core/src/main/java/org/apache/logging/log4j/core/config/plugins/util/PluginManager.java`
+| 222
+| a class-name prefix test; excluded by the plan's scope section
+
+| `log4j-core/src/main/java/org/apache/logging/log4j/core/util/OptionConverter.java`
+| 193, 214
+| a comment and a warning message; *not* named among the plan's exclusions, and outside its change
+  surface either way
+
+| `log4j-layout-template-json-test/src/test/java/.../resolver/MessageResolverTest.java`
+| 59
+| the asserted message *content*, preserved deliberately because the assertion compares it
+
+| `log4j-osgi-test/src/test/java/.../osgi/tests/AbstractLoadBundleTest.java`
+| 147
+| the reflective load by string literal -- the one exception the plan names
+
+| `log4j-osgi-test/src/test/java/.../osgi/tests/CoreOsgiTest.java`
+| 81
+| a *typed* fully-qualified declaration, in a file the plan lists as requiring no change; the two
+  statements are in tension, and the file was left exactly as the plan lists it
+
+| `src/site/antora/modules/ROOT/examples/manual/migration/Migration1Example.java`
+| 19
+| a real import, in a documentation example that is format-checked but never compiled
+|===
++
+The oracle is therefore satisfied in substance -- *this change introduces no occurrence and removes one*
+-- while the "`one known exception`" phrasing understates what a reader running the scan will see.
+. *One census omission, correctly left untouched.* A benchmark outside the migrated set,
+  `MarkerFilterBenchmark`, clears the superseded selector key in its teardown, and that statement is
+  absent from the plan's file census. It is unchanged from the base commit and it is *dead*: no tracked
+  Java file outside the retained bridge module sets that key any longer, so clearing it can have no
+  effect. Removing it would be a change with no finding behind it, so it stands.
+. *The release-notes fragment carries a licence header that its siblings do not.* Of 2,313 `entry`
+  fragments under the changelog directory, this change's is the *only one* with an Apache header. Neither
+  gate requires it -- Apache RAT and Spotless both exclude `+src/changelog/**/*.xml+` -- so the divergence
+  is cosmetic in both directions. It is *kept*, because the plan's quality-gate section names the
+  changelog fragment among the newly created files that carry the required header, and a corpus does not
+  trade a stated plan requirement for consistency with a convention the plan does not state.
+
+=== The one consequence that requires acknowledgment
+
+The plan flags a single item for explicit acknowledgment: the one retained, allowlisted dependency edge
+on the compatibility bridge, kept because it is the only coverage of a shipped bundle. *A second item now
+needs the same treatment, and it is raised here in those terms rather than left as a paragraph of
+description.*
+
+Under *Adaptation 1* above, the integration-test module's comparison harness is recorded as reaching
+Log4j 2's default configuration, because the fixture it names belongs to another module and is not on its
+class path. The rendered output of every fixture in this corpus is unaffected -- that harness consumes
+none of them -- but *what two migrated arms measure* does change, the comparison harness's own arm and
+the runner the driver launches for the two fixtures the peer corpus covers: at the base commit each arm's
+timed call was enabled and discarded by a root at `DEBUG` with no appender, and after the migration it is
+suppressed at a root of `ERROR`, so the timed call is a level check. The plan forbids changing what the
+harness measures, and *no remedy exists inside the change it permits*: building a configuration in code
+inside that class exceeds the change permitted to it, creating a fixture in that module is excluded
+outright, and publishing this module's test resources was rejected on measurement. The three observed
+values that establish the superseded state (`+root.getLevel()=DEBUG+`, `+isDebugEnabled()=true+`, root
+appender count *zero*) and the status line the migrated arm emits are both recorded under Adaptation 1.
+
+*The decision required is therefore a plan-level one, not a code change:* either acknowledge the changed
+measurement as the price of staying inside the permitted surface, or amend the plan to authorise one of
+the two remedies named above. Nothing in this corpus's ten tables, its captures or its counts depends on
+which way that goes.
+
 === The eight files in this directory
 
 This directory holds *exactly eight files and nothing else*:
@@ -2686,7 +2814,9 @@ slash form, because that is the only way to document a migration away from them 
 class loader would resolve such a citation. It contains no import and no executable reference of any kind:
 nothing compiles this file and nothing loads from it. The dotted class names that do appear name the
 *target* generation -- appenders behind the appender-class rows, a rendered thread name, and the generated
-benchmark class whose simple name a baseline renders under `+%c{1}+` -- and those are the classes this
-migration moves *to*. The superseded generation's package appears nowhere here in dotted form, so a
+benchmark class whose simple name a baseline renders under `+%c{1}+` -- or the test framework, in the one
+quoted compiler warning under *Disclosures*; both are what this migration moves *to*. The superseded
+generation's package appears nowhere here in dotted form -- the disclosure that inventories its remaining
+occurrences names them by file and line and describes the string rather than spelling it -- so a
 repository-wide source scan over this module's test tree returns nothing without needing this path
 excluded.

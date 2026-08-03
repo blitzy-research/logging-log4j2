@@ -51,6 +51,11 @@ public class LoggingDisabledBenchmark {
         log4j2Logger = LogManager.getLogger(FileAppenderWithLocationBenchmark.class);
         slf4jLogger = LoggerFactory.getLogger(FileAppenderWithLocationBenchmark.class);
         final URL log4j1ConfigLocation = LoggingDisabledBenchmark.class.getResource("/log4j12-perf2.xml");
+        // A fixture that was renamed or left out of the artifact is reported by name here, rather than as a bare
+        // NullPointerException from the URI conversion below.
+        if (log4j1ConfigLocation == null) {
+            throw new IllegalStateException("missing configuration resource: /log4j12-perf2.xml");
+        }
         // The context is started into a local and published to the field only once this arm is fully
         // initialised, because JMH does not invoke the teardown of a state whose setup threw: a context
         // assigned before a later failure would stay started for the remainder of the JVM's life, holding its

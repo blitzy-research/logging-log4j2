@@ -135,7 +135,7 @@ class NoOpAppenderCountParityTest {
                 throw new IllegalStateException(COUNT_BASELINE_RESOURCE + " records " + recorded + " events for "
                         + configId + " while the committed event script replays " + scripted
                         + " into it; the two artefacts must agree, and the one to correct is whichever of them stopped"
-                        + " describing what the superseded appender observed — never this comparison");
+                        + " describing what the superseded appender observed -- never this comparison");
             }
         }
         return recordedCounts;

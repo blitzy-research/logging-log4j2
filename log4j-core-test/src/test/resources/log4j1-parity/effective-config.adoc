@@ -221,19 +221,25 @@ Both fall out of correct, byte-identical behaviour, and both are explained in Re
 right-stripping or collapsing whitespace in a baseline is a defect. `grep -nP '[ \t]$'` is *expected*
 to match the T9 and T10 baselines.
 
-Because that expectation collides with the repository's standard whitespace check, the root
-`.gitattributes` exempts *only* `+*.baseline.txt+` under this directory and its sibling from the
-end-of-line blank check:
+That expectation collides with Git's own `git diff --check`, and the collision is resolved in favour of
+the payload rather than suppressed. Nothing in the repository exempts the byte, so that check *fails,
+exiting 2*, naming line 1 of the two captures this module owns that carry it:
 
 ----
-/log4j-core-test/src/test/resources/log4j1-parity/*.baseline.txt whitespace=-blank-at-eol
+log4j-core-test/src/test/resources/log4j1-parity/perf-log4j12-async.baseline.txt:1: trailing whitespace.
+log4j-core-test/src/test/resources/log4j1-parity/perf-log4j12.baseline.txt:1: trailing whitespace.
 ----
 
-Nothing else is exempted -- not this document, not any source file, and no other whitespace check on
-these files -- and *no capture byte is altered*: `git diff --check` passes with the trailing space still
-present in both the file and its staged blob. The sibling corpus records the full reasoning, including
-why a whitespace-safe re-encoding of the captures was rejected in favour of keeping the payload
-literal.
+T8's baseline is *not* among them, and neither is this document. The report is expected, bounded and
+inconsequential to the build: Spotless covers `+src/**/*.xml+` and `+src/**/*.properties+` under its
+`formats` section and `+src/main/java+` and `+src/test/java+` under its `java` section, so it reaches
+neither `+*.txt+` nor `+*.adoc+`; Apache RAT excludes `+**/*.txt+` and `+src/test/resources/**/*+`; and
+no workflow file and no repository hook invokes `git diff --check` or any other whitespace check. *No
+capture byte was altered to quieten it*, and the two remedies that would have quietened it -- exempting
+the captures in the root `.gitattributes`, which is not among the files this change may modify, and
+re-encoding the captures into a whitespace-safe representation, which would substitute a transformation
+of the rendered output for the output itself -- were both rejected. The sibling corpus records that
+reasoning in full.
 
 == Capture ordering and capture hygiene
 
@@ -504,11 +510,23 @@ default. That asymmetry is deliberate, and is recorded here so that a reader doe
 oversight.
 +
 Capture and replay execute inside `log4j-core-test`, which owns the resources, while the logger names,
-levels and messages derive from the intended consumers -- so the
-three baselines this document reports on are unaffected by either consumer's shape, and the logger names
+levels and messages derive from the intended consumers -- so the three baselines this document reports on
+are unaffected by either consumer's shape, and the logger names
 `+org.apache.logging.log4j.PerformanceComparison+` and
 `+org.apache.logging.log4j.core.async.perftest.RunLog4j1+` that they encode are carried across
 byte-for-byte.
++
+*What that level difference means for the harness needs an explicit acknowledgment, and is raised as one
+rather than left as description.* The rendered output of T8, T9 and T10 is unaffected -- the numbers and
+bytes in this document stand regardless -- but *what those two arms measure* does change: the superseded
+arm's timed call was enabled and discarded, and the migrated arm's is suppressed at the level check. The
+plan forbids changing what the harness measures, and no remedy exists inside the change it permits:
+building a configuration in code inside the consumer exceeds the change permitted to that file, creating a
+fixture in the consumer's module is excluded outright, and publishing this module's test resources was
+rejected on the measurement recorded above. The decision is therefore a plan-level one -- acknowledge the
+changed measurement as the price of staying inside the permitted surface, or amend the plan to authorise
+one of those remedies -- and it is the second such item, alongside the one retained, allowlisted bridge
+dependency edge the plan already flags. The sibling corpus records the same request in the same terms.
 . *T8's consumer is not selected by CI.* `log4j-core-its` configures Failsafe `<groups>` with
 JUnit-4-style category class names, which JUnit 5 reads as literal tag names and matches against nothing,
 while `PerformanceComparison` carries a JUnit 5 `@Tag`; that module's Surefire execution is skipped as well.
@@ -1417,6 +1435,25 @@ are recorded here rather than asserted.
   literal match with an invented attribute. The row stands as the corpus's one named exception, in the same
   way the normalized `%L` token stands as its one tolerated rendered-output difference: declared, measured,
   and bounded.
+
+=== A residual reference this module still carries
+
+One reference to the superseded selector key survives inside this module, outside the change's declared
+surface, and it is recorded here so that a reader who greps for the key is not left wondering.
+`src/test/resources/perf/runResponseTm.sh` -- a hand-run response-time script, not a build input and not
+invoked by any test, POM or workflow -- carries two *commented* lines naming T9 and T10 through
+`+-Dlog4j.configuration=+`, and a class-path string listing the superseded artefact's jar beside
+`+log4j-api-2.6-SNAPSHOT.jar+` and `+log4j-core-2.6-SNAPSHOT.jar+`. The file is *unchanged from the base
+commit*; it is the only tracked shell script in the repository naming that key; and every one of the
+lines in question is commented out, so nothing executes them.
+
+Two facts bound it. The key itself is now *dead* -- no tracked Java file outside the retained bridge
+module sets it -- so were those lines uncommented they would select nothing, exactly as they would have
+selected nothing had the file been "`updated`" without being re-tested. And the plan's closure sweep over
+non-POM surfaces enumerated `yml`, `yaml`, `toml`, `cfg`, `properties` and `json`, not `sh`, so this
+script was never inside the sweep it appears to contradict. Editing it would be a change with no finding
+behind it and no way to verify the result, since the script's stale jar versions show it has not been run
+against this reactor for many releases; it is therefore left exactly as it is, and disclosed.
 
 === A note on the bridge as a reference point
 

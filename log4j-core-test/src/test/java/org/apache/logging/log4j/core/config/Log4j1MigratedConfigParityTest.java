@@ -37,14 +37,14 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * Rendered-output parity gate for this module's three translated logging configurations:
- * {@code log4j12-perf.xml}, {@code perf-log4j12.xml} and {@code perf-log4j12-async.xml}. Each boots in its own
- * isolated logger context, is handed the one event its originating arm emitted, and the file it writes is compared
- * with the capture committed beside it in {@code /log4j1-parity/}. Those captures are oracles: <strong>a divergence
- * is a defect in the translated configuration</strong>, never a reason to widen the normalizer, relax an assertion
- * or edit a baseline. Rendered bytes are the whole subject, because two configurations can agree on every structural
- * detail and still differ through a padding width, a name-abbreviation strategy, a coupling between buffering and
- * flushing, or a separator that survives an empty context-map key.
+ * Rendered-output parity gate for this module's three translated logging configurations: {@code log4j12-perf.xml},
+ * {@code perf-log4j12.xml} and {@code perf-log4j12-async.xml}. Each boots in its own isolated logger context, is
+ * handed the one event its originating arm emitted, and the file it writes is compared with the capture committed
+ * beside it in {@code /log4j1-parity/}. Those captures are oracles: <strong>a divergence is a defect in the
+ * translated configuration</strong>, never a reason to widen the normalizer, relax an assertion or edit a baseline.
+ * Rendered bytes are the whole subject, because two configurations can agree on every structural detail and still
+ * differ through a padding width, a name-abbreviation strategy, a coupling between buffering and flushing, or a
+ * separator that survives an empty context-map key.
  * <p>
  * The constants and normalizer are restated here rather than shared with the peer gate in the benchmark module,
  * because that module compiles at a higher release level and depending on it would close a build cycle; the two are

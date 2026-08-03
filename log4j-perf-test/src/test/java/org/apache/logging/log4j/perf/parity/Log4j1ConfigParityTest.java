@@ -37,8 +37,8 @@ import org.junit.jupiter.api.Test;
  * <strong>Acceptance is an empty normalized diff</strong>, and a non-empty one is a defect in the translated
  * configuration -- never a reason to widen the normalizer, weaken an assertion, wait for output, or edit a baseline.
  * What a capture cannot express -- which configuration was located, which appender it wired, which pattern it was
- * given, how it buffers and flushes -- is held per fixture in the sibling
- * {@code log4j1-parity/effective-config.adoc}, so this class reads no value off a running configuration.
+ * given, how it buffers and flushes -- is held per fixture in the sibling {@code log4j1-parity/effective-config.adoc},
+ * so this class reads no value off a running configuration.
  */
 class Log4j1ConfigParityTest {
 

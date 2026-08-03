@@ -48,8 +48,7 @@ import org.slf4j.LoggerFactory;
 
 /**
  * Benchmarks Log4j 2 in two separately configured logger contexts, Logback and JUL using the ERROR level which is
- * enabled for this test.
- * The configuration for each writes to disk.
+ * enabled for this test. The configuration for each writes to disk.
  */
 @State(Scope.Benchmark)
 @Threads(1)
@@ -322,6 +321,11 @@ public class FileAppenderThrowableBenchmark {
                 // failure would stay started for the remainder of the JVM's life.
                 final URL configLocation =
                         FileAppenderThrowableBenchmark.class.getResource("/log4j12-perf-file-throwable.xml");
+                // A fixture that was renamed or left out of the artifact is reported by name here, rather than as a
+                // bare NullPointerException from the URI conversion below.
+                if (configLocation == null) {
+                    throw new IllegalStateException("missing configuration resource: /log4j12-perf-file-throwable.xml");
+                }
                 final LoggerContext starting =
                         new LoggerContext("FileAppenderThrowableBenchmarkLog4j1", null, configLocation.toURI());
                 boolean armReady = false;

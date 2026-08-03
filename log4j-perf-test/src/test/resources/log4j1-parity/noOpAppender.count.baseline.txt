@@ -23,8 +23,13 @@
 # NOT THE SOLE ORACLE. Before comparing a recorded number with what the appender
 # received, the consuming gate holds it to the number of records the event script
 # replays into the same fixture -- 12 for T6, 1 for T7 -- and to the exact bytes
-# of this file. An edit to either artefact alone therefore fails, and a number
-# quietly lowered to accommodate an undercount cannot pass.
+# of each payload record: every record must match ^(T[67])=([0-9]+)$ in full, so
+# one carrying a sign, separator, unit or surrounding space is rejected rather
+# than read as valid, and the records must be T6 then T7, in that order, with no
+# repetition, rename or addition. Comment and blank lines are dropped before that
+# check, which is what lets this provenance travel with the numbers without
+# loosening the grammar. An edit to either artefact alone therefore fails, and a
+# number quietly lowered to accommodate an undercount cannot pass.
 #
 # HOW THE APPENDER IS RESOLVED. The plugin these fixtures wire exposes the same
 # counter as an instance method rather than a field: identical counting

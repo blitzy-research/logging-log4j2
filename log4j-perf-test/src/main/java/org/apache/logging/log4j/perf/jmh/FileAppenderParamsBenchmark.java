@@ -62,12 +62,17 @@ public class FileAppenderParamsBenchmark {
         log4j2Logger = LogManager.getLogger(getClass());
         log4j2RandomLogger = LogManager.getLogger("TestRandom");
         slf4jLogger = LoggerFactory.getLogger(getClass());
-        // This arm gets a logger context of its own instead of a global selector property.
-        // `log4j.configurationFile` above belongs to the other Log4j 2 arm, and ConfigurationFactory returns on
-        // the first key it resolves, so a second global key would silently mis-configure one of the two arms.
-        // A non-null configuration URI makes the LoggerContext constructor skip property lookup altogether,
-        // which is what keeps the two arms independent inside a single JVM.
+        // This arm gets a logger context of its own instead of a global selector property. `log4j.configurationFile`
+        // above belongs to the other Log4j 2 arm, and ConfigurationFactory returns on the first key it resolves, so
+        // a second global key would silently mis-configure one of the two arms. A non-null configuration URI makes
+        // the LoggerContext constructor skip property lookup altogether, which is what keeps the two arms
+        // independent inside a single JVM.
         final URL log4j1ConfigLocation = FileAppenderParamsBenchmark.class.getResource("/log4j12-perf.xml");
+        // A fixture that was renamed or left out of the artifact is reported by name here, rather than as a bare
+        // NullPointerException from the URI conversion below.
+        if (log4j1ConfigLocation == null) {
+            throw new IllegalStateException("missing configuration resource: /log4j12-perf.xml");
+        }
         // The context is started into a local and published to the field only once all fallible setup steps
         // have succeeded, because JMH does not invoke the teardown of a state whose setup threw. The JUL handler
         // constructed below reaches the filesystem and can therefore fail: a context assigned before that

@@ -38,15 +38,14 @@ import org.apache.logging.log4j.core.config.Configurator;
 import org.junit.jupiter.api.Assertions;
 
 /**
- * Shared harness for the output-parity gates over this module's seven translated logging configurations, holding
- * the fixed event script, the normalizer and the isolated-context helper so that a committed baseline and the
- * capture compared against it are produced by <em>identical code</em>. Three contracts live here rather than in the
- * consuming tests: events carry a fabricated {@link StackTraceElement}, because a plain
- * {@code logger.debug(message)} would resolve the caller-location tokens into this harness; the one scripted
- * throwable is given a fixed trace, which would otherwise render environment-dependent frames; and a destination
- * is removed immediately before the configuration that writes it boots. The peer gate over the other module's
- * three configurations shares no code with this file, because that module compiles at a lower release level and
- * depending on this one would close a build cycle.
+ * Shared harness for the output-parity gates over this module's seven translated logging configurations, holding the
+ * fixed event script, the normalizer and the isolated-context helper so that a committed baseline and the capture
+ * compared against it are produced by <em>identical code</em>. Three contracts live here rather than in the consuming
+ * tests: events carry a fabricated {@link StackTraceElement}, because a plain {@code logger.debug(message)} would
+ * resolve the caller-location tokens into this harness; the one scripted throwable is given a fixed trace, which would
+ * otherwise render environment-dependent frames; and a destination is removed immediately before the configuration
+ * that writes it boots. The peer gate over the other module's three configurations shares no code with this file,
+ * because that module compiles at a lower release level and depending on this one would close a build cycle.
  */
 final class ParityCorpus {
 
@@ -543,7 +542,7 @@ final class ParityCorpus {
         return result.toString();
     }
 
-    private static final String CONTEXT_NAME_PREFIX = "parity-";
+    private static final String CONTEXT_NAME_PREFIX = "log4j1-parity-";
 
     /**
      * Boots one fixture in its own logger context from its classpath location, which keeps its original name.
