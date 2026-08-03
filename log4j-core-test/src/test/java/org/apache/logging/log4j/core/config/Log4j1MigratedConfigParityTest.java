@@ -17,6 +17,7 @@
 package org.apache.logging.log4j.core.config;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -208,6 +209,15 @@ class Log4j1MigratedConfigParityTest {
      * which is what makes the context independent of every configuration system property. The started context is the
      * caller's to close, and stopping it drains an asynchronous queue and flushes a buffered writer; a boot that fails
      * is stopped here, because a context that was never returned cannot be closed by anyone else.
+     * <p>
+     *   Every boot additionally asserts that the fixture suppressed the JVM shutdown hook, which is an invariant of the
+     *   translated set rather than a preference: the superseded generation installed no hook, relying on an explicit
+     *   shutdown call, and in this generation registering one makes {@code LoggerContext.start()} reach
+     *   {@code LogManager.getFactory()}, which builds the process-global context factory and, permanently, the context
+     *   selector it reads from {@code Log4jContextSelector} at that instant -- so anything that assigns that property
+     *   after a fixture has booted would silently be handed the default selector. Asserting it here makes dropping the
+     *   attribute from one of these three files fail the build.
+     * </p>
      */
     private static LoggerContext startContext(final String configId, final String configResourcePath)
             throws URISyntaxException {
@@ -217,6 +227,10 @@ class Log4j1MigratedConfigParityTest {
         boolean started = false;
         try {
             starting.start();
+            assertFalse(
+                    starting.getConfiguration().isShutdownHookEnabled(),
+                    () -> configResourcePath + " must declare shutdownHook=\"disable\": registering a JVM shutdown"
+                            + " hook initialises the process-global context factory and freezes its context selector");
             started = true;
         } finally {
             if (!started) {

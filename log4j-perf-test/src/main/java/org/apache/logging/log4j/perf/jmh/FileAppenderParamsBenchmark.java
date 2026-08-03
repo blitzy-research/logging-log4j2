@@ -73,12 +73,19 @@ public class FileAppenderParamsBenchmark {
         if (log4j1ConfigLocation == null) {
             throw new IllegalStateException("missing configuration resource: /log4j12-perf.xml");
         }
+        // That fixture declares shutdownHook="disable", and the attribute is load-bearing rather than cosmetic.
+        // Registering the hook makes LoggerContext.start() reach LogManager.getFactory(), which builds the
+        // process-global context factory and, permanently, the context selector it reads from Log4jContextSelector
+        // at that instant -- so a peer arm assigning that property afterwards would silently be handed the default
+        // selector instead of the one it asked for. Suppressing the hook is also what the superseded generation did:
+        // it installed none, relying on an explicit shutdown call, exactly as the teardown below does. Any fixture
+        // booted through a context of its own must therefore keep the attribute; the parity gates assert it.
         // The context is started into a local and published to the field only once all fallible setup steps
         // have succeeded, because JMH does not invoke the teardown of a state whose setup threw. The JUL handler
         // constructed below reaches the filesystem and can therefore fail: a context assigned before that
-        // failure would stay started for the remainder of the JVM's life, holding its configuration, its file
-        // manager and its shutdown callback, with nothing left able to reach it. The counter reset that follows
-        // publication cannot fail, so it is left where it reads best.
+        // failure would stay started for the remainder of the JVM's life, holding its configuration and its file
+        // manager, with nothing left able to reach it. The counter reset that follows publication cannot fail, so it
+        // is left where it reads best.
         final LoggerContext starting =
                 new LoggerContext("FileAppenderParamsBenchmark", null, log4j1ConfigLocation.toURI());
         boolean armReady = false;

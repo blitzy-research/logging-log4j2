@@ -427,7 +427,12 @@ checked against it:
   boot and cross-checked against the superseded fixture. They are deliberately *not* re-asserted inside the
   test through `Configuration`, `Appender`, `FileManager`, `PatternLayout`, `XmlConfiguration` or
   plugin-builder state: the committed capture is this corpus's oracle, and a structural check standing
-  beside it would be a second, weaker oracle able to pass while the capture diverged. The one dimension a
+  beside it would be a second, weaker oracle able to pass while the capture diverged. Exactly one structural
+  reading is exempt, and the exemption is principled rather than convenient: the shutdown-hook invariant
+  described in the bullet below is *not* a parity dimension at all. It names no logger, level, appender,
+  destination, layout or queue, so no rendered byte could ever carry it, and asserting it therefore stands in
+  for nothing -- it cannot pass while a capture diverges, because it says nothing about what was rendered. The
+  one dimension a
   `DEBUG`-only capture genuinely cannot show, T8's `+%5p+` field width, is settled the same way -- by the
   observed conversion pattern in T8's table below, never by reading the translated file back.
 * *Pin each case to its own resource, and leave no lookup for a fallback to win.* The case resolves the
@@ -449,6 +454,24 @@ checked against it:
   channels at once. The test itself registers no status listener: a listener is process-global state, and
   this module runs with `forkCount=1C`, `reuseForks=false` and `runOrder=random`, so each case asserts
   only what it can own.
+* *Assert that each fixture suppressed the virtual-machine shutdown hook.* All three translated fixtures
+  declare `+shutdownHook="disable"+` on their root element, and the gate reads
+  `+isShutdownHookEnabled()+` back from each started context to prove it. The attribute carries two
+  independent obligations. It is *faithful*: the superseded generation installed no such hook, relying on an
+  explicit shutdown call, which is precisely what this gate and the arms that consume T9 and T10 perform, so
+  suppressing this generation's hook preserves the original disposition rather than adding one. And it is
+  *isolating*: `LoggerContext` L311-L313 sets the hook up only when the configuration allows it, that set-up
+  at L357-L360 calls `+LogManager.getFactory()+`, `LogManager` L62-L63 builds the process-global context
+  factory in a static field initialiser, and `Log4jContextFactory` L60-L62 builds its `ContextSelector`
+  eagerly at L99-L115 -- so a context started from a fixture without the attribute freezes the process-global
+  selector, and anything assigning `Log4jContextSelector` afterwards is silently handed the default one.
+  Asserting it here makes dropping the attribute from one of these three files fail the build. The attribute
+  is read at `XmlConfiguration` L116-L117, predates the 2.24.3 baseline, and has an in-repository precedent in
+  `log4j-core-test/src/test/resources/log4j-test3.xml`. What suppression does *not* reach is stated for the
+  record: `LoggerContext.stop` L448 calls `+LogManager.getFactory().removeContext(this)+` unconditionally, so
+  stopping a context builds that factory whatever the configuration says. For a privately constructed context
+  the removal itself is a no-op, the call is core production code of another module, and it is common to every
+  context these fixtures are booted in -- migrated or otherwise.
 * *Stay within this module's API surface.* `log4j-core-test` compiles at release 8, so the test may
   not use `var`, `Files.readString`, `Files.writeString`, `String.strip`, text blocks, or
   `List.of`/`Set.of`/`Map.of`. `String.strip` and `String.trim` are doubly excluded, for the

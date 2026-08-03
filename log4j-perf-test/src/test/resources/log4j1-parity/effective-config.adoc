@@ -119,7 +119,10 @@ corpus, and they are the whole of the module's test tree:
 
 | `ParityCorpus`
 | loads and verifies the fixed event script against its ordered manifest, replays a configuration's
-  events into an isolated logger context, and applies the four-token normalizer
+  events into an isolated logger context, and applies the four-token normalizer. Every context it starts
+  additionally has its shutdown-hook suppression asserted, which is the isolation invariant of the
+  translated set rather than a parity dimension -- see "`Suppressing the shutdown hook is part of the
+  mechanism, not decoration`"
 
 | `Log4j1ConfigParityTest`
 | exactly five independent golden-master cases, one per file-based fixture T1-T5, and no sixth. Each
@@ -1734,7 +1737,55 @@ preservation directive on existing test assertions requires.
 The mechanism is also *selector-independent*, which is worth stating because it is the reason one
 benchmark's asynchronous-context-selector overrides could be left *exactly* as they were. A privately
 constructed context is not obtained through the selector, so overriding the selector neither helps nor
-hinders it.
+hinders it. That statement is about how the context is *obtained*, and on its own it is not enough: what
+a context's *lifecycle* touches is a separate question, and the next subsection settles it with measured
+evidence rather than leaving it implied.
+
+==== Suppressing the shutdown hook is part of the mechanism, not decoration
+
+*Every one of the seven fixtures declares `+shutdownHook="disable"+` on its root element.* The attribute is
+load-bearing twice over, and both reasons were established by running the system rather than by reading it.
+
+First, *fidelity*: the superseded generation installed no virtual-machine shutdown hook at all. It relied on
+an explicit shutdown call, which is exactly what every arm's teardown and every gate in this corpus performs.
+Suppressing this generation's hook therefore *preserves* the superseded disposition instead of introducing a
+behaviour the original never had, and it removes a hook registration and cancellation from every trial.
+
+Second, and this is the operative reason, *isolation*. Starting a context registers that hook unless the
+configuration suppresses it, and registering it is not a local act:
+
+* `log4j-core/src/main/java/org/apache/logging/log4j/core/LoggerContext.java` L311-L313 calls the private
+  hook set-up only when `+configuration.isShutdownHookEnabled()+` holds;
+* that method, at L357-L360, calls `+LogManager.getFactory()+`;
+* `log4j-api/src/main/java/org/apache/logging/log4j/LogManager.java` L62-L63 assigns the process-global
+  context factory in a *static field initialiser*, so the first touch of that class builds it;
+* `log4j-core/src/main/java/org/apache/logging/log4j/core/impl/Log4jContextFactory.java` L60-L62 builds its
+  `ContextSelector` *eagerly*, reading the selector property once, at L99-L115.
+
+The consequence is that a context started from a fixture that does *not* suppress the hook freezes the
+process-global context selector at that instant, and a peer arm that assigns `Log4jContextSelector`
+afterwards is silently handed the default selector instead of the one it asked for. Measured at this
+revision, booting a fixture in a context of its own and logging through it, then assigning the property and
+asking for the current context: *without* the attribute the context obtained is the plain one, *with* it the
+asynchronous one. `+XmlConfiguration+` L116-L117 is where the attribute is read, the in-repository precedent
+for it is `log4j-core-test/src/test/resources/log4j-test3.xml`, and the option predates the 2.24.3 baseline.
+
+*The invariant is asserted, not merely written down.* `ParityCorpus.startContext` checks
+`+isShutdownHookEnabled()+` on every fixture it boots, and the peer corpus's gate does the same for its three,
+so dropping the attribute from any of the ten translated files fails the build instead of quietly displacing a
+neighbouring arm.
+
+*What suppression does not reach, stated plainly so nobody mistakes the boundary.* Stopping a context is a
+second, independent touch of the same global: `LoggerContext.stop` L448 calls
+`+LogManager.getFactory().removeContext(this)+` *unconditionally*, and no configuration option or public API
+suppresses it. For a privately constructed context that removal is a no-op -- the context was never in a
+selector's registry -- but the call still builds the factory if nothing has yet. So a context's *teardown*
+initialises the process-global factory even with the hook suppressed. That is a property of this generation's
+core, shared by every arm in these classes that logs through it, and it is out of this change's reach: the
+file is production code of another module. The observable reach is confined to a single virtual machine
+running several arms in sequence, which is the debugging mode of the benchmark harness rather than a
+measurement run; substituting an untouched native arm for a migrated one in such a sequence produces the
+identical outcome, at this revision and at the base commit alike.
 
 ==== The two rejected alternatives
 
@@ -2349,7 +2400,10 @@ queue element, and an `info` root without the location attribute.
 *Neither is copied.* The translations of T6 and T7 use the upper-case `ASYNC` name, the capitalised
 appender-reference element, a `debug` root level carried from the superseded priority spelling, the
 self-closing counting-appender element, no status attribute, and no queue element -- the last because
-the array-backed queue is already the builder default.
+the array-backed queue is already the builder default. They carry one root-element attribute the peers do
+not, `+shutdownHook="disable"+`, which every translated fixture carries for the reasons set out under
+*Suppressing the shutdown hook is part of the mechanism, not decoration*; it names no appender, no level
+and no layout, so it changes no rendered byte, as the count baselines for these two fixtures confirm.
 
 === The message token
 

@@ -326,6 +326,16 @@ public class FileAppenderThrowableBenchmark {
                 if (configLocation == null) {
                     throw new IllegalStateException("missing configuration resource: /log4j12-perf-file-throwable.xml");
                 }
+                // That fixture declares shutdownHook="disable", and in this class the attribute is not cosmetic but
+                // the thing that keeps this arm from displacing its neighbours. Registering the hook makes
+                // LoggerContext.start() reach LogManager.getFactory(), which builds the process-global context
+                // factory and, permanently, the context selector it reads from Log4jContextSelector at that instant.
+                // Two arms above assign that property in their own setup and then require an AsyncLoggerContext, so a
+                // hook registered here would hand them the default selector instead and break an assertion this arm
+                // has no business reaching. Suppressing the hook is also what the superseded generation did: it
+                // installed none, relying on an explicit shutdown call, exactly as the teardown below does. Any
+                // fixture booted through a context of its own must therefore keep the attribute; the parity gates
+                // assert it for all of them.
                 final LoggerContext starting =
                         new LoggerContext("FileAppenderThrowableBenchmarkLog4j1", null, configLocation.toURI());
                 boolean armReady = false;

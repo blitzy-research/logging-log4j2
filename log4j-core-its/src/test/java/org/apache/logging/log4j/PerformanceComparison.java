@@ -80,6 +80,14 @@ class PerformanceComparison {
         migratedContext = migratedConfigLocation == null
                 ? new LoggerContext(MIGRATED_CONTEXT_NAME)
                 : new LoggerContext(MIGRATED_CONTEXT_NAME, null, migratedConfigLocation.toURI());
+        // Starting a context registers a JVM shutdown hook unless its configuration suppresses one, and registering it
+        // reaches LogManager.getFactory(), which builds the process-global context factory and, permanently, the
+        // context selector it reads from Log4jContextSelector at that instant. Every translated fixture therefore
+        // declares shutdownHook="disable", and this class's fixture -- which belongs to another module, so the lookup
+        // above returns null here and the default configuration is used instead -- would too. That has no consequence
+        // in this module: no arm anywhere in it selects a non-default context selector, and the first arm's own
+        // LogManager.getLogger call below requires the global factory in any case. The hook is likewise not relied
+        // upon, because the class-level teardown stops this context explicitly.
         migratedContext.start();
     }
 

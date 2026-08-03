@@ -15,7 +15,12 @@
   ~ See the License for the specific language governing permissions and
   ~ limitations under the License.
   -->
-<Configuration>
+<Configuration shutdownHook="disable">
+  <!-- shutdownHook="disable" preserves the superseded generation's disposition, which installed no JVM shutdown hook
+       and relied on an explicit shutdown call, and it keeps a context started from this file free of global side
+       effects: registering the hook makes LoggerContext.start() reach LogManager.getFactory(), which builds the
+       process-global context factory and, permanently, its context selector. Do not drop it, and see
+       effective-config.adoc in the parity corpus of this module's test resources. -->
   <Appenders>
     <File name="File" fileName="perftest.log" bufferedIo="true" append="false" immediateFlush="false">
       <PatternLayout>
