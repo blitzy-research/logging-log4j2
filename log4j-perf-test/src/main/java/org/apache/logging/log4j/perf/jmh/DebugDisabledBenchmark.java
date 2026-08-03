@@ -29,8 +29,8 @@ import org.openjdk.jmh.annotations.TearDown;
 import org.slf4j.LoggerFactory;
 
 /**
- * Benchmarks Log4j 2, the arm formerly driven by Log4j 1 (now also native Log4j 2, against the migrated Log4j 1
- * configuration), and Logback using the DEBUG level which is disabled for this test. One of the primary
+ * Benchmarks Log4j 2 in two separately configured logger contexts, and Logback, using the DEBUG level which is
+ * disabled for this test. One of the primary
  * performance concerns of logging frameworks is adding minimal overhead when logging is disabled. Some users disable
  * all logging in production, while others disable finer logging levels in production. This benchmark demonstrates the
  * overhead in calling {@code logger.isDebugEnabled()} and {@code logger.debug()}.
@@ -50,12 +50,11 @@ public class DebugDisabledBenchmark {
 
         log4jLogger = LogManager.getLogger(DebugDisabledBenchmark.class);
         slf4jLogger = LoggerFactory.getLogger(DebugDisabledBenchmark.class);
-        // The arm formerly driven by Log4j 1.x is now native Log4j 2, and it is deliberately NOT bootstrapped
-        // through a global selector property. `log4j.configurationFile` above already belongs to the Log4j 2
-        // arm, and ConfigurationFactory returns on the first key it resolves, so a second global key would
-        // silently mis-configure one of the two arms. Handing a non-null configuration URI to the
-        // LoggerContext constructor skips property lookup altogether, keeping both arms independent inside a
-        // single JVM and leaving the Log4j 2 and Logback arms exactly as they were.
+        // This arm gets a logger context of its own instead of a global selector property.
+        // `log4j.configurationFile` above belongs to the other Log4j 2 arm, and ConfigurationFactory returns on
+        // the first key it resolves, so a second global key would silently mis-configure one of the two arms.
+        // A non-null configuration URI makes the LoggerContext constructor skip property lookup altogether,
+        // which is what keeps the two arms independent inside a single JVM.
         final URL log4j1ConfigLocation = DebugDisabledBenchmark.class.getResource("/log4j12-perf2.xml");
         // The context is started into a local and published to the field only once this arm is fully
         // initialised, because JMH does not invoke the teardown of a state whose setup threw: a context
@@ -65,8 +64,8 @@ public class DebugDisabledBenchmark {
         boolean armReady = false;
         try {
             starting.start();
-            // The logger name is preserved byte-for-byte: Log4j 1.x derived it from clazz.getName(), which is
-            // exactly the argument used here, so all three arms keep sharing a single logger name.
+            // The exact class name is required here: it is the name the other two arms acquire above, so all
+            // three arms share one logger name and stay comparable.
             log4jClassicLogger = starting.getLogger(DebugDisabledBenchmark.class.getName());
             armReady = true;
         } finally {

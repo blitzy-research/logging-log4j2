@@ -60,9 +60,10 @@ public class LoggingDisabledBenchmark {
         boolean armReady = false;
         try {
             starting.start();
-            // The cross-class logger name is deliberate and preserved verbatim: this benchmark has always
-            // asked for a logger named after FileAppenderWithLocationBenchmark, and renaming it would move
-            // the events onto a different logger, level and appender wiring.
+            // The cross-class logger name is intentional: this benchmark requests the logger named after
+            // FileAppenderWithLocationBenchmark, which is also the name its other two arms acquire above.
+            // Changing it would change the logger's identity, and with it the level and appender wiring the
+            // events resolve to.
             log4j1Logger = starting.getLogger(FileAppenderWithLocationBenchmark.class.getName());
             armReady = true;
         } finally {

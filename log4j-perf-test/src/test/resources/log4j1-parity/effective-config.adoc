@@ -108,13 +108,10 @@ before booting its fixture and stops its own context afterwards.
 
 Two API-surface consequences follow from that release level and are honoured by the consuming tests:
 nothing in them uses a construct newer than Java 9, and the peer module's own gate is written to the
-lower surface its module compiles against. This directory contains exactly eight files and no ninth.
+lower surface its module compiles against.
 
-*State of the consuming tests.* The corpus is complete and self-sufficient, and the three Java
-classes that read it now exist in
-`log4j-perf-test/src/test/java/org/apache/logging/log4j/perf/parity/`. They are the whole of the
-module's test tree: there is no fourth class, and this migration adds none -- the file plan for this
-module is closed at those three consumers plus this corpus.
+The three classes in `log4j-perf-test/src/test/java/org/apache/logging/log4j/perf/parity/` consume this
+corpus, and they are the whole of the module's test tree:
 
 [cols="1,3"]
 |===
@@ -132,43 +129,15 @@ module is closed at those three consumers plus this corpus.
   "`The padding width, and the two claims it needs`"
 
 | `NoOpAppenderCountParityTest`
-| the custom-component gate: it resolves the `NoOp` appender by name under `ASYNC` for T6 and T7 and
-  compares the delivered event count with the recorded counts. Before either case reads them, those
-  counts are held to the committed event script -- each recorded number must equal the number of records
-  the script replays into that fixture -- and to the exact bytes of the file they were read from
+| the custom-component gate: it resolves the `NoOp` appender by name under `ASYNC` for T6 and T7,
+  asserts its concrete type, and compares the delivered event count with the recorded counts. Before
+  either case reads them, those counts are held to the committed event script -- each recorded number must
+  equal the number of records the script replays into that fixture -- and to that file's payload bytes
 |===
 
-Every statement below about what a consuming test does therefore describes delivered code. The corpus
-nevertheless precedes those classes in time, and that ordering is not incidental: the baselines had to
-be captured while the superseded classpath still existed, whereas the tests were written afterwards
-against the committed evidence. The baselines, the fixed event script and the tables are the
-specification, and the tests are written against them rather than the other way round.
-
-== Rules source
-
-*No separate on-disk user rules document was provided for this project.* The rules source was
-queried repeatedly, including with an explicit request for the entire document and with a request
-for a range beyond its end to prove there was no unread remainder; every call returned the same
-single line stating that none was provided. The document is one line long, so it has been read in
-full and nothing here is planned against a partial read.
-
-Two consequences follow, and both are honoured deliberately:
-
-* *No rule is invented.* Every constraint recorded in this document is carried from the migration
-  plan governing the change, or from a source file cited by content.
-* *The absence is not treated as licence to lower the bar.* Every rule below is held to as though it
-  had been issued as a separate document, at enterprise-standard best practice.
-
-The binding inventory is therefore the migration plan's own: its six numbered rules -- diff-hunk
-confinement, no compatibility bridge in the final state, identical logger names, pattern conversions
-verified token by token against rendered output, documented nearest-equivalents for rolling policies,
-and captured baseline output as the tie-breaker for ambiguity -- together with its boundary and
-preservation directives, its conflict resolutions, and the project's own quality gates.
-
-One repository file deserves an explicit exclusion note, because its name invites confusion.
-`AGENTS.md` at the repository root is the Apache Log4j project's own guidance for security
-researchers. It is repository *content*, not a directive addressed to this migration, and it is out
-of scope.
+The baselines, the fixed event script and the tables are the specification, and the tests are written
+against them rather than the other way round: the baselines had to be captured before the configurations
+were translated, which is no longer possible.
 
 == Method: every Log4j 2 value here is observed
 
@@ -303,8 +272,14 @@ reported through the status channel, and *none of them stops a context from star
 three could leave a table row looking right and a capture rendering matching bytes. That absence is
 established from the boot itself. Every boot recorded in this document was taken under
 `-Dlog4j2.debug`, which routes the whole status channel to the console, and read for anything at that
-level before its row was accepted. Every fixture in this corpus, and every fixture in the peer
-`log4j-core-test` corpus, boots, replays and stops with nothing recorded at either level.
+level before its row was accepted. No fixture in this corpus reports a configuration warning: every one of
+the seven boots, replays and stops with nothing at either level attributable to the configuration under
+test. The peer `log4j-core-test` corpus records the same result for its three fixtures, alongside one
+warning that is disclosed there precisely because it is *not* a finding about any fixture -- a service
+registration left dangling by the reduced capture class path, identical for all three fixtures,
+independent of the configuration under test, and affecting neither the effective configuration nor the
+rendered output. A warning of that kind is admissible only when it is shown to be independent of the
+fixture; a warning naming a configuration, an appender reference or an attribute never is.
 
 The consuming tests carry the executable half of the same contract, and the division of labour between the
 two halves is deliberate. A status listener is process-global state, and these cases run with
@@ -336,16 +311,6 @@ followed by the plugin trace's own `+Configuration(<PATH>/<file>.xml)+` -- and n
 recorded boot named a file other than the fixture the row is for. The consuming tests hand each context
 the classpath URI of the resource their case names, so a case cannot resolve a sibling either.
 
-An intermediate state of this corpus is recorded rather than erased, because it explains why the
-additivity row is worth a section of its own. The row was briefly made to agree *literally*, by adding
-`additivity="true"` to all seven translated root elements -- an attribute none of the superseded sources
-declared and the target design does not carry. That closed the row at the price of a translated attribute
-with no counterpart in the file it translates, which is precisely the kind of divergence this corpus
-exists to prevent. The attribute has been removed: each translated root now carries its level and nothing
-else, the row's two observed values differ, and the difference is discharged by proof of inertness rather
-than by an addition to the fixture. The measurements behind that proof are recorded in the additivity
-section below.
-
 == Provenance and capture ordering
 
 The baselines beside this document were captured at the migration's base commit
@@ -365,9 +330,9 @@ One reads the old world and the other reads the new one. They are two distinct m
 change, and this corpus is the only thing they share.
 ====
 
-The count baseline for T6 and T7 was read straight off the *public `count` field* of the custom
-no-op appender this migration deletes -- a field, not a getter, read as `appender.count.get()`. Once
-that deletion lands, the field does not exist and *the capture can never be taken again*.
+The count baseline for T6 and T7 was read straight off the *public `count` field* of the superseded
+custom no-op appender -- a field, not a getter, read as `appender.count.get()`. That appender is gone,
+so the field no longer exists and *the capture can never be taken again*.
 
 [NOTE]
 .Two captures were re-taken, and how that was made sound
@@ -396,25 +361,6 @@ API, and a live comparison necessarily would. The rule is scoped to what is writ
 the whole repository -- the sibling corpus enumerates the references that survive untouched, every one of
 them either a deliberate verification of the shipped bridge bundle or inert. If something will not build, the answer is
 never to restore the removed dependency, the compatibility bridge, or the deleted no-op appender.
-
-Two build-environment notes, recorded so nobody chases them twice. *Both describe a FRESH,
-UNPRIMED checkout* -- they are properties of a starting state, not standing facts about every
-environment, and in a primed one neither applies:
-
-* In a fresh checkout, building this module on its own -- selecting only this project, without also
-  building what it depends on -- fails during *dependency resolution*, before any test runner is
-  reached, reporting that it could not find the reactor's own `2.27.0-SNAPSHOT` artefacts, because the
-  sibling snapshots are not yet installed. *Add the also-make flag (`-am`)*, or install the reactor
-  once beforehand. Once the reactor has been installed, the sibling snapshots are present in the local
-  repository and selecting this project alone resolves and builds -- offline included -- with no
-  also-make flag at all.
-* In a fresh checkout there is no toolchain descriptor: the repository's own Maven configuration
-  directory holds only a JVM configuration file and the wrapper, and the repository ships no
-  `toolchains.xml`. That makes toolchain selection an environment-provisioned facility rather than a
-  checked-in one -- provisioned by continuous integration, which installs both required JDKs, or
-  equally by a descriptor placed in the user's Maven home. Where such a descriptor is present, this
-  module's tests select the required toolchain locally too; the override this module declares for the
-  default test execution is what routes them there instead of onto the inherited pin.
 
 == The normalizer -- exactly four tokens
 
@@ -1159,12 +1105,14 @@ acquisition is dynamic too.
 
 == The custom-component count baseline
 
-`noOpAppender.count.baseline.txt` is the sole oracle for the one custom logging component this migration
-removes. This section is its wider documentation. The *capture provenance* -- the four things a reader
-needs in order to trust the two numbers -- travels inside the fixture itself, as a `#` comment preamble,
-because it belongs with the values it explains and because a capture that cannot be redone must carry the
-account of how it was taken. This section then places those numbers in the context of the rest of the
-corpus.
+`noOpAppender.count.baseline.txt` records the observed behaviour of the one custom logging component this
+corpus covers. It is not the only thing the comparison checks: the consuming gate also holds each number
+to the count of script records replayed into the same fixture and to the fixture's exact bytes, as the
+fixture's own preamble sets out. This section is its wider documentation. The *capture provenance* -- the
+four things a reader needs in order to trust the two numbers -- travels inside the fixture itself, as a
+`#` comment preamble, because it belongs with the values it explains and because a capture that cannot
+be redone must carry the account of how it was taken. This section then places those numbers in the
+context of the rest of the corpus.
 
 === The fixture
 
@@ -1299,8 +1247,8 @@ emissions is not part of this change and was not committed; only the two numbers
 The comparison test must read the migrated count from the appender retrieved *by name* -- the counting
 appender as referenced from the asynchronous one -- replay the same single pass of the same script, and
 assert *exact equality* against the two numbers. Acceptance is exact equality, nothing weaker. *A
-mismatch is a defect in the migration and is fixed in the migration; it is never a reason to adjust the
-recorded counts.*
+mismatch is a defect in the translated configuration and is fixed there; it is never a reason to adjust
+the recorded counts.*
 
 === Why the numbers are twelve and one
 
@@ -1432,14 +1380,14 @@ That inertness was *measured*, not argued from source alone, in three independen
 
 === Why the attribute is not stated to make the row agree literally
 
-Adding `additivity="true"` to the translated roots does close the row literally, and an intermediate state
-of this corpus did exactly that. It was removed, for a reason that outranks the tidiness of the row: it
-puts an attribute in the translated file that has *no counterpart in the file being translated*. The
-target design for these fixtures carries the level on the root element and nothing else, and a corpus whose
-job is to show that a translation adds nothing cannot itself add something. The comparison with
-`blocking="true"` does not rescue it either: that attribute states Log4j 2's own default in order to make a
-*preserved* behaviour visible, whereas `additivity="true"` would state a value in order to make a *reported
-flag* agree -- and the flag is the one thing here that has no behaviour to preserve.
+Stating `additivity="true"` on the translated roots would close the row literally, and it is deliberately
+not stated, for a reason that outranks the tidiness of the row: it would put an attribute in the translated
+file that has *no counterpart in the file being translated*. The target design for these fixtures carries
+the level on the root element and nothing else, and a corpus whose job is to show that a translation adds
+nothing cannot itself add something. The comparison with `blocking="true"` does not rescue it either: that
+attribute states Log4j 2's own default in order to make a *preserved* behaviour visible, whereas
+`additivity="true"` would state a value in order to make a *reported flag* agree -- and the flag is the
+one thing here that has no behaviour to preserve.
 
 This is exactly the kind of finding this document exists to surface, and all three naive readings of it are
 wrong. "`The flag differs, therefore the migration changed additivity`" is wrong: nothing consults the flag.
@@ -1740,17 +1688,17 @@ context reports the fixture's configuration being initialised and stopped once p
 context shared across the workers by a reference-counted holder reports one of each. The file manager is
 registry-shared in both arrangements, which is precisely why the difference is invisible in the rendered
 output and has to be read off the boot log. The state-scoped form is the one each class's schema
-prescribes, and it is the form in the tree; the holder was tried and removed, because it moves ownership of
-the appender graph off the state that JMH creates and tears down.
+prescribes. A shared holder is unsuitable, because it moves ownership of the appender graph off the state
+that JMH creates and tears down.
 
 ==== Failure paths are closed as well
 
 A context started and then abandoned would stay started for the remainder of the JVM's life, so every
 *benchmark* state in this module that starts one closes that gap the same way: build outside the guard,
 because construction starts nothing; start and obtain inside it; publish only afterwards; and stop the local
-in a `finally` block whenever the arm did not become ready. The seventh class, outside this module, is
-confined to a five-hunk change that does not extend to a guard, and it starts its context in a JUnit
-class-level setup whose failure fails the class rather than releasing a worker for reuse. A privately constructed context is
+in a `finally` block whenever the arm did not become ready. The seventh class, outside this module, takes no
+such guard: it assigns its static field and then starts the context, in a JUnit class-level setup whose
+failure fails the class rather than releasing a worker for reuse. A privately constructed context is
 absent from every context registry -- that absence is what keeps it from displacing the native arm -- so
 the local is the only reference to it in the process, and a failure that escapes with the local still
 started leaks a running context that nothing can afterwards reach.
@@ -1764,26 +1712,25 @@ into a local
 behind an `armReady` flag, acquires its logger from it, and assigns the class's context field only after
 both have succeeded; a `finally` block calls `Configurator.shutdown` on the local otherwise.
 
-*Where that guard is, and why it is recorded here rather than gated by a test of its own.* The shape is
-uniform and readable in all six classes: the context is built and started into a local, the logger is taken
-from that local, the class's field is assigned only once both steps have succeeded, and a `finally` block
-calls `Configurator.shutdown` on the local whenever `armReady` is still `false`. The two classes that open a
-`java.util.logging` destination *after* their migrated arm is up are the ones the guard exists for, because
-that handler constructor is the one post-start step that can throw where no earlier step can. **No test is
-added to drive that path.** The file plan for this migration is closed, and it admits exactly three
-consuming test classes in this module -- the two golden-master gates and the shared harness -- so a fourth
-class written only to inject a setup failure would be a change this migration is not authorised to make.
-The guard is therefore recorded as *source-level* evidence, verified by reading the six `@Setup` methods and
-their matching teardowns, and it is stated as such rather than as an executed result.
+*Where that guard is.* The shape is uniform and readable in all six classes: the context is built and
+started into a local, the logger is taken from that local, the class's field is assigned only once both
+steps have succeeded, and a `finally` block calls `Configurator.shutdown` on the local whenever
+`armReady` is still `false`. The two classes that open a `java.util.logging` destination *after* their
+own arm is up are the ones the guard exists for, because that handler constructor is the one post-start
+step that can throw where no earlier step can. The guard is *source-level* evidence, established by
+reading the six `@Setup` methods and their matching teardowns rather than by an executed result.
 
 The corpus harness and the peer corpus's test start their context behind the same kind of flag and stop it
-in a `finally` block if the start threw, so a failed boot leaves nothing running. The seventh class takes
-the guard one step further, because it also sets two selector properties for its sibling arms before it
-starts anything: it publishes its static field only once its context has both started *and* been validated
--- the validation takes the context as an argument rather than reading the field, precisely so that it runs
-before publication -- and on any failure it stops the local and withdraws both properties, so a failed
-setup leaves neither a running context nor a global property behind. Its teardown assertions are unchanged
-by that, and remain the record of what a completed run left behind.
+in a `finally` block if the start threw, so a failed boot leaves nothing running. The seventh class differs,
+and the difference is worth stating because the two arrangements are easy to conflate. It sets two selector
+properties for its sibling arms, resolves its fixture, assigns its static field and then starts the
+context: there is no readiness flag, no validation before publication and no withdrawal of the properties
+on failure. What stands in for them is the surrounding lifecycle -- a failure in a JUnit class-level setup
+fails the class rather than handing a worker on with a half-initialised state -- and the class-level
+teardown, which clears both properties and stops the context through the same null-safe
+`Configurator.shutdown(ctx)` the benchmark classes use, so the field being assigned before the start
+costs nothing. Its teardown carries no assertion, exactly as it did before, which is what the
+preservation directive on existing test assertions requires.
 
 The mechanism is also *selector-independent*, which is worth stating because it is the reason one
 benchmark's asynchronous-context-selector overrides could be left *exactly* as they were. A privately
@@ -1818,13 +1765,11 @@ adaptation for the same reason, and two details make it worth recording rather t
 into the list of six.
 
 [IMPORTANT]
-.Status
 ====
-That class *has* taken the adaptation: it carries no reference to the superseded facade, acquires its
-migrated arm from an isolated `LoggerContext` held in a static field, and gives all three of its arms the
-identical logger name. What follows is therefore an observation of the current tree, not a forward
-contract. It remains outside the processed set this document's fixture tables report on, because it
-selects none of this module's seven configurations; it is recorded here because this section is the
+`log4j-core-its/src/test/java/org/apache/logging/log4j/PerformanceComparison.java` carries no reference to
+the superseded facade, acquires its own arm from an isolated `LoggerContext` held in a static field, and
+gives all three of its arms the identical logger name. It selects none of this module's seven
+configurations, so it appears in no fixture table here; it is recorded in this section because this is the
 migration's single designated home for adaptation prose.
 ====
 
@@ -1860,41 +1805,23 @@ identified by a class-loader hash in place of the context name, because it is in
 Both arms therefore reach the same unconfigured state, which is what keeps the three-way comparison
 meaningful: the class measures three arms under one set of conditions, not one arm under privileged ones.
 
-That outcome is recorded here rather than engineered away, and the reason is a scope rule rather than a
-preference. Reproducing the superseded arm's unconfigured *hierarchy* -- root at `DEBUG`, no appender, which
-is what the genuine `log4j:log4j:1.2.17` artifact reported under the same missing-resource condition
-(`+root.getLevel()=DEBUG+`, `+isDebugEnabled()=true+`, root appender count *zero*) -- would mean building a
-configuration in code inside that class, and the permitted change to it is confined to five hunks: three
-imports, the logger declaration, the removal of the superseded selector constant and its two property calls,
-the context construction, and its teardown. Building a hierarchy is none of those, and creating a fixture in
-that module is excluded outright. The consequence is bounded and stated: in an environment where the fixture
-is absent, the migrated arm's timed `debug` call is a level check rather than an emission -- exactly as the
-native arm's already is, and exactly as the Logback arm's is not. Restoring the fixture to that module's
-classpath, which no requirement asks for, would remove the condition altogether.
+That outcome is recorded rather than engineered away. Reproducing the superseded arm's unconfigured
+*hierarchy* -- root at `DEBUG`, no appender, which is what the genuine `log4j:log4j:1.2.17` artifact
+reported under the same missing-resource condition (`+root.getLevel()=DEBUG+`, `+isDebugEnabled()=true+`,
+root appender count *zero*) -- would mean building a configuration in code inside that class, which is
+outside the change permitted to it, and creating a fixture in that module is excluded outright. The
+consequence is bounded and stated: where the fixture is absent, that arm's timed `debug` call is a level
+check rather than an emission -- exactly as the arm beside it already is, and exactly as the third-party
+arm's is not. Restoring the fixture to that module's classpath, which no requirement asks for, would
+remove the condition altogether.
 
-*Selection, and how the class is actually run.* This class is tagged for a test group that the
-integration-test module's failsafe configuration does not select: that configuration's `groups` filter names
-JUnit 4 category types, which JUnit 5 reads as literal tag names and matches against nothing. The module's
-surefire execution is skipped as well, so a normal build runs the class not at all -- and *that selection is
-left exactly as it is*, because changing a module's test selection is not one of the five permitted hunks
-either, and because no committed build adaptation for this class is in scope. Its migrated behaviour is
-therefore validated by *explicit external invocation*: the module's test classes and test classpath are
-built with
-
-[source,bash]
-----
-mvn -pl log4j-core-its test-compile
-mvn -pl log4j-core-its dependency:build-classpath -Dmdep.outputFile=<file>
-----
-
-and the one class is then executed directly through the JUnit Platform launcher against that classpath.
-*Absence of a failure report for this class in a normal build is not evidence that it passed* -- which is
-precisely why the invocation is explicit and why its result is recorded here.
-
-Two successful external invocations are recorded, on the migrated tree: `+1 tests found, 1 tests started, 1
-tests successful, 0 tests failed+`, the run finishing in 983 ms, and the same result on a second run. Both
-printed the three arms' timings, and both ended with the migrated context stopped. Nothing was added to any
-build file to obtain either run.
+*Selection.* This class is tagged for a test group the integration-test module's failsafe configuration
+does not select: that configuration's `groups` filter names JUnit 4 category types, which JUnit 5 reads as
+literal tag names and matches against nothing, and the module's surefire execution is skipped as well, so
+a normal build runs the class not at all. That selection is left exactly as it is. The consequence for a
+reviewer is the part that matters: *absence of a failure report for this class in a normal build is not
+evidence that it passed*, so its behaviour has to be established by invoking it directly, against the
+module's own test classes and test classpath, outside the build's own selection.
 
 === Adaptation 2: deleting the custom no-op appender in favour of the one Core ships
 
@@ -2153,21 +2080,15 @@ independent T1-T5 output cases. Claim one is likewise a claim about *configurati
 configuration evidence: the recorded boot, plus the committed pattern text a reviewer reads beside it.
 
 [NOTE]
-.Why no rendered-output case can see the width, measured rather than argued
+.Why no rendered-output case can see the width
 ====
-The blindness was demonstrated instead of assumed. Dropping the width from T1's fixture alone -- changing
-its `+<Pattern>+` from `+%d %5p [%t] …+` to `+%d %p [%t] …+` and touching no test code -- leaves *all five*
-T1-T5 cases passing: T1's capture still matches its committed baseline byte for byte, and T2's is still
-byte-empty. That is the whole point of this subsection. Every event these fixtures replay renders a
-five-character level, so the width is invisible in the bytes, and no arrangement of rendered-output
-assertions can recover it.
-
-It is *not* invisible in the boot. The same mutation changes the layout-pattern row of T1's
-effective-configuration table, because that row records what the running configuration was handed:
-`+%d %p [%t] %c{1} %X{transactionId} - %m%n+` where the superseded fixture declared
-`+%d %5p [%t] %c{1} %X{transactionId} - %m%n+`. Claim one is therefore held where it is observable -- in
-the recorded boot and in the committed pattern text -- and the rendered-output cases are left holding only
-what rendered bytes can actually establish.
+Every event these fixtures replay renders a five-character level, so the width is invisible in the bytes:
+the same captures would be produced by a bare level token, and no arrangement of rendered-output
+assertions can recover the difference. It is *not* invisible in the boot. The layout-pattern row of each
+fixture's effective-configuration table records the pattern the running configuration was handed, so a
+width dropped in translation shows up there immediately -- as `+%d %p [%t] %c{1} %X{transactionId} - %m%n+`
+against the declared `+%d %5p [%t] %c{1} %X{transactionId} - %m%n+` -- while rendering identical bytes.
+Claim one is therefore held where it is observable, in the recorded boot and in the committed pattern text.
 ====
 
 [NOTE]
@@ -2543,7 +2464,7 @@ a write syscall per event that the superseded generation never performed here.
 | *none*
 | *`false`* -- preserved
 
-| a scratch copy of T1 carrying `bufferedIo="false"`
+| the same fixture with `bufferedIo="false"` stated
 | `WARN The bufferSize is set to 8192 but bufferedIo is false: false`
 | *`true`* -- broken
 |===
@@ -2729,12 +2650,12 @@ This directory holds *exactly eight files and nothing else*:
   line-number token normalized and the caller class and method compared byte for byte. 101 bytes
 | `log4j12-perf-file-throwable.baseline.txt` | T4's baseline, four lines including two frames
 | `perf-log4j12-async.baseline.txt` | T5's baseline, one line, with a significant trailing space
-| `noOpAppender.count.baseline.txt` | the recorded event counts for T6 and T7 -- two data lines, `T6`
-  first, preceded by the `#` commentary that records how they were captured: the field read on the deleted
-  component, the single replay behind each number, the by-name lookup and accessor the comparison uses, and
-  the before/after direction of the capture. The consuming gate skips comment and blank lines and validates
-  every payload line strictly, so the provenance travels with the numbers without loosening the grammar.
-  The wider rationale lives in this document, under the section *The custom-component count baseline*
+| `noOpAppender.count.baseline.txt` | the recorded event counts for T6 and T7 -- two payload lines, `T6`
+  first, preceded by `#` commentary recording how they were captured: the field read on the component the
+  fixtures previously wired, the single replay behind each number, the by-name resolution and type check the
+  comparison performs, and the direction of the capture. The consuming gate skips comment and blank lines
+  and validates every payload line strictly, so the provenance travels with the numbers without loosening
+  the grammar. The wider rationale lives in this document, under *The custom-component count baseline*
 | `effective-config.adoc` | this document
 |===
 
@@ -2744,15 +2665,12 @@ directory, and none was needed -- a test resource root is a build default. The b
 enable the sibling comparison tests belong to the build file's own owner and are mentioned in this
 document only as context.
 
-The comparison tests themselves now exist: the sibling
-`log4j-perf-test/src/test/java/org/apache/logging/log4j/perf/parity/` package holds `ParityCorpus`,
-`Log4j1ConfigParityTest` and `NoOpAppenderCountParityTest`, and exactly those three files.
-The corpus nevertheless remains complete independently of them, and that ordering is not incidental: the
-baselines had to be captured while the superseded classpath still existed, which is no longer the case,
-whereas the tests were written afterwards *against* the committed evidence. The captures are therefore
-oracles and the tests are their consumers, never the reverse -- and `ParityCorpus` enforces the
-relationship in code, by verifying the committed script against an embedded manifest of the twenty-one
-events, record for record and in order, before it will replay anything.
+The sibling `log4j-perf-test/src/test/java/org/apache/logging/log4j/perf/parity/` package holds the three
+consumers of this corpus -- `ParityCorpus`, `Log4j1ConfigParityTest` and `NoOpAppenderCountParityTest` --
+and exactly those three files. The corpus is complete independently of them: the captures are the oracles
+and the tests are their consumers, never the reverse, and `ParityCorpus` enforces that relationship in
+code by verifying the committed script against an embedded manifest of the twenty-one events, record for
+record and in order, before it will replay anything.
 
 === About this file specifically
 
@@ -2763,33 +2681,12 @@ of the tables above. It is UTF-8 with newline line endings and no byte-order mar
 licence header its siblings' payload files do not need, and lays its tables out by hand because no
 formatter covers this file type in this repository.
 
-It names concepts and cites evidence *file paths* from the superseded generation and from the
-compatibility bridge, in prose, because that is the only way to document a migration away from them
-honestly. It contains no import, no compiled reference and no executable reference of any kind. Dotted
-class names do appear -- counted exactly below -- but every one of them is inert: a prose citation or a
-line of captured output, never something a class loader is asked to resolve. Nothing compiles this file
-and nothing loads from it.
-
-One verification consequence is worth recording, because it is *better* than the licence this document
-was granted. Documentation was permitted to name the superseded namespace in prose, on the
-understanding that the repository-wide source gate would then match inside this file and would have to
-be run with this one path excluded. It does not match. The claim is narrow and worth stating without
-room for misreading, because the two generations' package names differ by one segment and are easy to
-conflate:
-
-* The *superseded* generation's package -- the one the prohibition is about, and the one whose dotted
-  spelling is the only form an import statement or a class loader would accept -- appears *nowhere* in
-  this document in that dotted form. Every citation of it is written as a *file path*, in slash form,
-  which no class loader would resolve. There are nine such citations, naming seven distinct files, two
-  of which are cited twice.
-* The *target* generation's package is a different namespace, and its dotted names *do* appear here --
-  *twelve* times, and the enumeration is exhaustive: ten name appenders -- five `FileAppender` and two
-  `AsyncAppender` cells behind the appender-class rows, plus the fully-qualified note that keeps the T6 and
-  T7 rows readable, which spells the deleted `NoOpLog4jAppender` once and its `CountingNoOpAppender`
-  replacement twice, the second inside a quoted `-Dlog4j2.debug` boot line; one is the rendered thread name
-  of a real benchmark trial; and one is the generated JMH class whose simple name a baseline renders under
-  `+%c{1}+`. Those are the classes this
-  migration moves *to*. They are not in scope for any prohibition, and their presence is the point.
-
-The gate over this module's test tree therefore returns nothing *without* an exclusion, and the
-permitted carve-out was never actually needed.
+It cites evidence from the superseded generation and from the compatibility bridge as *file paths*, in
+slash form, because that is the only way to document a migration away from them honestly and because no
+class loader would resolve such a citation. It contains no import and no executable reference of any kind:
+nothing compiles this file and nothing loads from it. The dotted class names that do appear name the
+*target* generation -- appenders behind the appender-class rows, a rendered thread name, and the generated
+benchmark class whose simple name a baseline renders under `+%c{1}+` -- and those are the classes this
+migration moves *to*. The superseded generation's package appears nowhere here in dotted form, so a
+repository-wide source scan over this module's test tree returns nothing without needing this path
+excluded.

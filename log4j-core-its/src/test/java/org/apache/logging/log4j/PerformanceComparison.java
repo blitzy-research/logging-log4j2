@@ -41,11 +41,10 @@ import org.junit.jupiter.api.Test;
 class PerformanceComparison {
 
     /**
-     * Serves the arm migrated from Log4j 1.x, in a logger context of its own rather than in the global one. This class
-     * drives three logging generations inside a single JVM and two of them are now the same implementation, so a
-     * single global configuration property could only ever select one of the two. Assigned by {@link #setupClass()},
-     * which JUnit runs before it instantiates this class, and stopped again by {@link #cleanupClass()} so that no
-     * started context outlives the test.
+     * Serves the third arm, in a logger context of its own rather than in the global one. Two of the three arms this
+     * class drives inside a single JVM are Log4j 2, so a single global configuration property could only ever select
+     * one of them. Assigned by {@link #setupClass()}, which JUnit runs before it instantiates this class, and stopped
+     * again by {@link #cleanupClass()} so that no started context outlives the test.
      */
     private static LoggerContext migratedContext;
 
@@ -72,11 +71,11 @@ class PerformanceComparison {
     static void setupClass() throws Exception {
         System.setProperty(ConfigurationFactory.CONFIGURATION_FILE_PROPERTY, CONFIG);
         System.setProperty(LOGBACK_CONF, LOGBACK_CONFIG);
-        // The migrated arm is configured by pointing a context of its own straight at its configuration rather than by
-        // setting a global property, so that it cannot displace the configuration the native arm selects above. That
-        // fixture belongs to another module whose test resources are not published, so this lookup returns null on this
-        // module's test classpath - exactly as the Log4j 1.x lookup it replaces did - and a null location reproduces
-        // that pre-existing "no explicit configuration" outcome rather than newly failing the test.
+        // This arm is configured by pointing a context of its own straight at its configuration rather than by setting
+        // a global property, so that it cannot displace the configuration the arm above selects. The fixture belongs to
+        // another module whose test resources are not published, so on this module's test classpath the lookup returns
+        // null; a null location leaves the context to fall back to the default configuration, which is the same
+        // position the arm above is in, and keeps the three-way comparison meaningful instead of failing the test.
         final URL migratedConfigLocation = PerformanceComparison.class.getResource("/" + LOG4J_CONFIG);
         migratedContext = migratedConfigLocation == null
                 ? new LoggerContext(MIGRATED_CONTEXT_NAME)

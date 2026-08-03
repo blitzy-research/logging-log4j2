@@ -35,41 +35,26 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * Comparison gate for the custom counting no-op appender of the two asynchronous fixtures, now bound to
- * {@link CountingNoOpAppender}: it asserts that the appender receives exactly the number of events recorded in the
- * committed baseline.
- * <p>
- * <strong>Count identity is output identity for this component.</strong> A counting no-op appender renders nothing —
- * both fixtures declare no layout and the plugin's factory hard-codes a null layout — so there is no rendered text
- * to diff and no conversion token to audit, and the byte-identity criterion that applies to a component producing
- * text has no subject here.
- * </p>
- * <p>
- * Both fixtures are gated because they differ in the one dimension that changes what the appender observes: whether
- * their asynchronous wrapper captures caller location. Each is an independent case with its own isolated context,
- * and the expected counts come from the committed baseline rather than from literals in this code — a baseline whose
- * records are held to a strict grammar, to the expected identifiers in the expected order, and to the committed event
- * script, before any case reads it.
- * </p>
- * <p>
- * What the appender sits behind — the asynchronous wrapper, its queue depth, its blocking disposition and its
- * caller-location capture — is not read off the running configuration here. A count cannot observe any of it, so it
- * is evidence of a different kind, recorded per fixture in the sibling {@code log4j1-parity/effective-config.adoc}
- * from boot output observed under {@code -Dlog4j2.debug}. This gate owns the count, and the ordering that makes the
- * count trustworthy.
- * </p>
+ * Comparison gate for the counting no-op appender the two asynchronous fixtures bind: it asserts that
+ * {@link CountingNoOpAppender} receives exactly the number of events recorded in the committed baseline.
+ * <strong>Count identity is output identity for this component</strong> -- a counting no-op appender renders nothing,
+ * both fixtures declare no layout and the plugin's factory hard-codes a null layout, so there is neither rendered
+ * text to diff nor a conversion token to audit. Both fixtures are gated because they differ in the one dimension that
+ * changes what the appender observes: whether their asynchronous wrapper captures caller location. What a count
+ * cannot observe -- the wrapper, its queue depth, its blocking disposition and its location capture -- is recorded
+ * per fixture in the sibling {@code log4j1-parity/effective-config.adoc}.
  */
 class NoOpAppenderCountParityTest {
 
     /**
-     * Classpath location of the recorded counts, which are the authoritative oracle for both fixtures. A count that
-     * does not match is a defect in the migration and must never be adjusted here to make the comparison pass.
+     * Classpath location of the recorded counts. A count that does not match is a defect in the translated configuration
+     * and must never be adjusted here to make the comparison pass.
      */
     private static final String COUNT_BASELINE_RESOURCE = "/log4j1-parity/noOpAppender.count.baseline.txt";
 
     /**
-     * Name both fixtures bind the counting appender to, character for character. It is deliberately <em>not</em> the
-     * name the Log4j 2 peer fixtures in the same directory use, so the two must not be conflated.
+     * Name both fixtures bind the counting appender to, character for character, and deliberately <em>not</em> the name
+     * the Log4j 2 peer fixtures in the same directory use.
      */
     private static final String COUNTING_APPENDER_NAME = "NoOp";
 
@@ -82,42 +67,22 @@ class NoOpAppenderCountParityTest {
     private static final String LOCATION_CONFIG_RESOURCE = "/perf-log4j12-async-location-noOpAppender.xml";
 
     /**
-     * Grammar of one recorded-count line, {@code <configId>=<count>}, as the committed baseline defines it.
-     * <p>
-     * It is anchored and admits only the two identifiers this gate covers followed by decimal digits, so a record
-     * that has been renamed, given a sign, a separator, a unit or surrounding space is rejected outright rather than
-     * read as a valid one. Comments and blank lines never reach it: the baseline carries its capture provenance as
-     * {@code #} commentary, and {@link ParityCorpus#dataLines(String)} drops comments and blank lines before a
-     * record is matched, so the commentary is ignored while the payload stays strictly validated.
-     * </p>
+     * Grammar of one recorded-count line, {@code <configId>=<count>}, anchored and admitting only the two identifiers
+     * this gate covers followed by decimal digits, so a record that has been renamed or given a sign, separator, unit or
+     * surrounding space is rejected rather than read as valid. Comments and blank lines never reach it, because
+     * {@link ParityCorpus#dataLines(String)} drops them first.
      */
     private static final Pattern COUNT_RECORD = Pattern.compile("^(T[67])=([0-9]+)$");
 
     /**
-     * Immutable index of the recorded counts, built once from the committed baseline and validated on the way in —
-     * for its record grammar, for its record identity and order, and for agreement with the scripted event
-     * cardinality. See {@link #readRecordedCounts()} and {@link #validated(Map)}.
-     * <p>
-     * The comment and blank-line skipping rule is the corpus's own {@link ParityCorpus#dataLines(String)}, so this
-     * gate and the event-script gate cannot disagree about which lines are payload. The map is unmodifiable,
-     * insertion-ordered and never replaced, so this class holds no mutable state that could couple its cases
-     * together under forked, randomly ordered execution.
-     * </p>
+     * Immutable index of the recorded counts, validated for record grammar, identity, order and agreement with the
+     * scripted event cardinality, and never replaced, so no mutable state couples the cases together.
      */
     private static final Map<String, Integer> RECORDED_COUNTS = validated(readRecordedCounts());
 
     /**
-     * Parses the committed baseline into an insertion-ordered index of its recorded counts.
-     * <p>
-     * Encounter order is preserved because the order of the records is part of the contract, and a repeated
-     * identifier is rejected rather than allowed to overwrite silently — both of which {@link #validated(Map)} then
-     * relies on. The parse is deliberately tolerant of exactly two things, comments and blank lines, and strict
-     * about everything else: the baseline's four mandated provenance topics are commentary that must be readable by
-     * a person and invisible to this parser, while every payload line must match {@link #COUNT_RECORD} exactly.
-     * </p>
-     *
-     * @return an unmodifiable map from configuration id to recorded count, in the baseline's own record order
-     * @throws IllegalStateException if the baseline is missing, unreadable, malformed, or repeats an identifier
+     * Parses the committed baseline into an insertion-ordered index, preserving record order because it is part of the
+     * contract and rejecting a repeated identifier rather than letting it overwrite silently.
      */
     private static Map<String, Integer> readRecordedCounts() {
         final List<String> records = ParityCorpus.dataLines(COUNT_BASELINE_RESOURCE);
@@ -142,39 +107,14 @@ class NoOpAppenderCountParityTest {
     }
 
     /**
-     * Rejects a committed baseline whose records are not the ones the scripted events imply: the two fixtures this
-     * gate covers, in that order, each carrying the number of events the committed script replays into it.
-     * <p>
-     * Order is part of the contract rather than a presentation detail. The two fixtures differ in one dimension only,
-     * whether their asynchronous wrapper captures caller location, so accepting the records in either order would
-     * equally accept a baseline whose two counts had been swapped — and swapped counts are exactly the shape a defect
-     * in the location-capturing path would take.
-     * </p>
-     * <p>
-     * <strong>The counts are checked against a second, independent artefact rather than trusted.</strong> Every case
-     * below compares what the appender received with what this file records, so this file is the whole of that oracle;
-     * if it were also the only statement of how many events there are to receive, a baseline quietly reduced to match
-     * an undercounting migration would still pass. The committed event script is that second artefact: its records for
-     * a fixture are exactly the events replayed into that fixture, both fixtures declare a root level that admits
-     * every scripted level, and no filter stands between the wrapper and the counter — so the number of records the
-     * script holds for an id <em>is</em> the number of events its appender must receive. Deriving the expectation from
-     * the script therefore makes the two artefacts hold each other: a defect in the migration fails the delivery
-     * assertion, and an edit to either artefact alone fails here.
-     * </p>
-     * <p>
-     * What is <em>not</em> asserted is the whole raw content of the file. The baseline is required to carry its
-     * capture provenance as {@code #} commentary — how the superseded counter was read, that one pass of the script
-     * produced each number, how the replacement is looked up, and the direction of the capture — so a reader that
-     * insisted on payload alone would reject the very evidence the corpus is required to ship. Commentary is
-     * therefore ignored and the payload is validated strictly: grammar, identifiers, order and counts.
-     * </p>
-     * <p>
-     * All of this is a precondition on the harness's own input rather than a case of its own: a baseline that fails it
-     * must fail every case that reads it, not one case dedicated to the file.
-     * </p>
-     *
-     * @param recordedCounts the records parsed out of the committed baseline
-     * @return the same records, once they have been established to be what the script implies
+     * Rejects a committed baseline whose records are not the ones the scripted events imply: the two fixtures this gate
+     * covers, in that order, each carrying the number of events the committed script replays into it. Order is part of
+     * the contract, because the fixtures differ in one dimension only, so accepting either order would equally accept a
+     * baseline whose counts had been swapped -- exactly the shape a defect in the location-capturing path would take.
+     * <strong>The counts are checked against a second, independent artefact rather than trusted:</strong> the committed
+     * script's records for a fixture are exactly the events replayed into it, both fixtures admit every scripted level
+     * and no filter stands between wrapper and counter, so the number of records the script holds for an id <em>is</em>
+     * the number its appender must receive. An edit to either artefact alone therefore fails here.
      */
     private static Map<String, Integer> validated(final Map<String, Integer> recordedCounts) {
         final List<String> recordedIds = new ArrayList<>(recordedCounts.keySet());
@@ -215,23 +155,12 @@ class NoOpAppenderCountParityTest {
 
     /**
      * Boots one fixture in its own context, replays that fixture's scripted events and asserts the counting appender
-     * received exactly the recorded number of them.
-     * <p>
-     * <strong>The ordering here is load-bearing and must not be rearranged.</strong> Stopping a context detaches
-     * its configuration before stopping it, so the appender must be resolved while the context still runs and the
-     * reference held across the stop; asking for it afterwards yields nothing. Stopping is also what drains the
-     * asynchronous wrapper's queue into the appender, so the count must be read after the stop — read any earlier,
-     * it observes a queue still in flight.
-     * </p>
-     * <p>
-     * The remedy for an undercount is therefore this ordering and nothing else. Waiting for the queue, relaxing the
-     * comparison, removing the asynchronous wrapper or editing the committed baseline would each turn a defect in
-     * the migration into a passing test.
-     * </p>
-     *
-     * @param configId the configuration id, which selects both the recorded count and the scripted events
-     * @param configResourcePath absolute classpath path of the fixture, unchanged by the translation
-     * @throws URISyntaxException if the fixture resolves but cannot be expressed as a URI
+     * received exactly the recorded number of them. <strong>The ordering is load-bearing and must not be
+     * rearranged.</strong> Stopping a context detaches its configuration before stopping it, so the appender must be
+     * resolved while the context still runs and the reference held across the stop; stopping is also what drains the
+     * wrapper's queue into the appender, so an earlier read of the count observes a queue still in flight. That ordering
+     * is the only remedy for an undercount: waiting for the queue, relaxing the comparison, removing the wrapper or
+     * editing the baseline would each turn a defect into a passing test.
      */
     private static void assertRecordedCountIsDelivered(final String configId, final String configResourcePath)
             throws URISyntaxException {
@@ -252,10 +181,10 @@ class NoOpAppenderCountParityTest {
     }
 
     /**
-     * Resolves the counting appender from a running configuration, by the exact name the fixture binds it to and by
-     * nothing else: the plugin is never constructed directly, subclassed or read reflectively. The concrete type is
-     * checked explicitly rather than left to the assignment, so a fixture that bound this name to some other
-     * appender reports what it bound instead of failing with a bare cast error.
+     * Resolves the counting appender by the exact name the fixture binds it to and by nothing else: the plugin is never
+     * constructed directly, subclassed or read reflectively. Resolution yields an {@link Appender}, so the concrete type
+     * is checked explicitly rather than left to the assignment, and a fixture that bound this name elsewhere reports what
+     * it bound instead of failing with a bare cast error.
      */
     private static CountingNoOpAppender countingAppender(
             final LoggerContext context, final String configId, final String configResourcePath) {
@@ -273,11 +202,8 @@ class NoOpAppenderCountParityTest {
     }
 
     /**
-     * Returns the count recorded for one configuration id, widened to the width the appender's accessor reports. A
-     * missing id is reported by name rather than allowed to unbox to a null-pointer failure, so a baseline that
-     * stopped covering one of the two fixtures says so.
-     *
-     * @throws IllegalStateException if the committed baseline carries no count for that id
+     * Returns the count recorded for one id, widened to the appender accessor's width; a missing id is reported by name
+     * rather than allowed to unbox to a null-pointer failure.
      */
     private static long recordedCount(final String configId) {
         final Integer recorded = RECORDED_COUNTS.get(configId);

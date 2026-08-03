@@ -32,9 +32,9 @@ import org.openjdk.jmh.annotations.State;
 import org.openjdk.jmh.annotations.TearDown;
 
 /**
- * Tests Async Appender performance when including caller location information, for the benchmark arm formerly driven by
- * Log4j-1.2. The arm now runs on the native Log4j 2 API against the migrated
- * {@code perf-log4j12-async-location-noOpAppender.xml} configuration.
+ * Tests Async Appender performance when including caller location information, against the
+ * {@code perf-log4j12-async-location-noOpAppender.xml} configuration, which wraps a counting no-op appender so that the
+ * measurement covers the asynchronous hand-off and its location capture rather than any I/O.
  */
 @State(Scope.Benchmark)
 public class AsyncAppenderLog4j1LocationBenchmark {

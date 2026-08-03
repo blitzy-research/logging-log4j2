@@ -35,9 +35,8 @@ import org.openjdk.jmh.annotations.TearDown;
 import org.slf4j.LoggerFactory;
 
 /**
- * Benchmarks Log4j 2, the arm formerly driven by Log4j 1 (now also native Log4j 2, against the migrated Log4j 1
- * configuration), Logback and JUL using the DEBUG level which is enabled for this test. The configuration
- * for each uses a FileAppender and captures caller location information
+ * Benchmarks Log4j 2 in two separately configured logger contexts, Logback and JUL using the DEBUG level which is
+ * enabled for this test. The configuration for each uses a FileAppender and captures caller location information
  */
 @State(Scope.Thread)
 public class FileAppenderWithLocationBenchmark {
@@ -60,15 +59,14 @@ public class FileAppenderWithLocationBenchmark {
         log4j2Logger = LogManager.getLogger(FileAppenderWithLocationBenchmark.class);
         log4j2RandomLogger = LogManager.getLogger("TestRandom");
         slf4jLogger = LoggerFactory.getLogger(FileAppenderWithLocationBenchmark.class);
-        // The arm formerly driven by Log4j 1.x is now native Log4j 2, and it is deliberately NOT bootstrapped
-        // through a global selector property. `log4j.configurationFile` above already belongs to the Log4j 2
-        // arm -- which owns the two loggers acquired just above -- and ConfigurationFactory returns on the
-        // first key it resolves, so a second global key would silently mis-configure one of the two arms.
-        // That would be especially damaging here: the Log4j 2 peer configuration abbreviates the caller class
-        // with a trailing dot while this arm's configuration uses a bare integer option, so a hijack would
-        // change rendered output rather than fail loudly. Handing a non-null configuration URI to the
-        // LoggerContext constructor skips property lookup altogether, keeping both arms independent inside a
-        // single JVM and leaving the Log4j 2 and Logback arms exactly as they were.
+        // This arm gets a logger context of its own instead of a global selector property.
+        // `log4j.configurationFile` above belongs to the other Log4j 2 arm -- which owns the two loggers
+        // acquired just above -- and ConfigurationFactory returns on the first key it resolves, so a second
+        // global key would silently mis-configure one of the two arms. That is especially damaging here: the
+        // peer configuration abbreviates the caller class with %C{1.} while this arm's configuration uses
+        // %C{1}, a different abbreviation, so a hijack would change rendered output rather than fail loudly.
+        // A non-null configuration URI makes the LoggerContext constructor skip property lookup altogether,
+        // which is what keeps the two arms independent inside a single JVM.
         final URL log4j1ConfigLocation = FileAppenderWithLocationBenchmark.class.getResource("/log4j12-perfloc.xml");
         // The context is started into a local and published to the field only once this arm is fully
         // initialised, because JMH does not invoke the teardown of a state whose setup threw: a context
@@ -79,8 +77,8 @@ public class FileAppenderWithLocationBenchmark {
         boolean armReady = false;
         try {
             starting.start();
-            // The logger name is preserved byte-for-byte: Log4j 1.x derived it from clazz.getName(), which is
-            // exactly the argument used here, so the events stay on the logger they have always used.
+            // The exact class name is required here: it is the name the Log4j 2, Logback and JUL arms use, so
+            // every arm emits on one logger name and the measurements stay comparable.
             log4j1Logger = starting.getLogger(FileAppenderWithLocationBenchmark.class.getName());
             armReady = true;
         } finally {

@@ -38,9 +38,8 @@ import org.openjdk.jmh.annotations.TearDown;
 import org.slf4j.LoggerFactory;
 
 /**
- * Benchmarks Log4j 2, the arm formerly driven by Log4j 1 (now also native Log4j 2, against the migrated Log4j 1
- * configuration), Logback and JUL using the DEBUG level which is enabled for this test. The configuration
- * for each uses a FileAppender
+ * Benchmarks Log4j 2 in two separately configured logger contexts, Logback and JUL using the DEBUG level which is
+ * enabled for this test. The configuration for each uses a FileAppender
  */
 @State(Scope.Thread)
 public class FileAppenderParamsBenchmark {
@@ -63,26 +62,26 @@ public class FileAppenderParamsBenchmark {
         log4j2Logger = LogManager.getLogger(getClass());
         log4j2RandomLogger = LogManager.getLogger("TestRandom");
         slf4jLogger = LoggerFactory.getLogger(getClass());
-        // The arm formerly driven by Log4j 1.x is now native Log4j 2, and it is deliberately NOT bootstrapped
-        // through a global selector property. `log4j.configurationFile` above already belongs to the Log4j 2
-        // arm, and ConfigurationFactory returns on the first key it resolves, so a second global key would
-        // silently mis-configure one of the two arms. Handing a non-null configuration URI to the LoggerContext
-        // constructor skips property lookup altogether, keeping both arms independent inside a single JVM and
-        // leaving the Log4j 2, Logback and JUL arms exactly as they were.
+        // This arm gets a logger context of its own instead of a global selector property.
+        // `log4j.configurationFile` above belongs to the other Log4j 2 arm, and ConfigurationFactory returns on
+        // the first key it resolves, so a second global key would silently mis-configure one of the two arms.
+        // A non-null configuration URI makes the LoggerContext constructor skip property lookup altogether,
+        // which is what keeps the two arms independent inside a single JVM.
         final URL log4j1ConfigLocation = FileAppenderParamsBenchmark.class.getResource("/log4j12-perf.xml");
-        // The context is started into a local and published to the field only once every remaining setup step
-        // has succeeded, because JMH does not invoke the teardown of a state whose setup threw. The JUL handler
+        // The context is started into a local and published to the field only once all fallible setup steps
+        // have succeeded, because JMH does not invoke the teardown of a state whose setup threw. The JUL handler
         // constructed below reaches the filesystem and can therefore fail: a context assigned before that
         // failure would stay started for the remainder of the JVM's life, holding its configuration, its file
-        // manager and its shutdown callback, with nothing left able to reach it.
+        // manager and its shutdown callback, with nothing left able to reach it. The counter reset that follows
+        // publication cannot fail, so it is left where it reads best.
         final LoggerContext starting =
                 new LoggerContext("FileAppenderParamsBenchmark", null, log4j1ConfigLocation.toURI());
         boolean armReady = false;
         try {
             starting.start();
-            // The logger name is preserved byte-for-byte: Log4j 1.x derived it from clazz.getName(), and `clazz` was
-            // whatever getClass() returned. JMH subclasses this @State class, so getClass() -- not a class literal --
-            // is what keeps the events on the logger they have always used.
+            // getClass() -- not a class literal -- is required here, because it is what the Log4j 2, Logback and
+            // JUL arms above resolve their names from as well. JMH subclasses this @State class, so the resolved
+            // name is the generated subclass's, and every arm emits on that one name.
             log4j1Logger = starting.getLogger(getClass().getName());
 
             julFileHandler = new FileHandler("target/testJulLog.log");

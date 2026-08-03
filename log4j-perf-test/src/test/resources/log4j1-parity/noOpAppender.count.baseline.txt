@@ -1,90 +1,55 @@
 # =============================================================================
 # CUSTOM-COMPONENT COUNT BASELINE
 # =============================================================================
-#
-# This migration deletes the repository's one and only custom Log4j 1.x logging
-# component -- a counting no-op appender -- and re-wires the two configurations
-# that used it to the counting no-op plugin Core already ships. That component
-# renders nothing and writes nowhere, so its COUNT is the whole of its
-# observable contract: for this component, count identity IS output identity.
-# The two numbers at the bottom of this file are the counts the deleted
-# component observed, and they are the sole oracle for its comparison test.
+# Both configurations below wire a counting no-op appender, which renders nothing
+# and writes nowhere, so its COUNT is the whole of its observable contract: for
+# this component, count identity is output identity.
 #
 #   id  configuration                                  observable
 #   --  ---------------------------------------------  ------------------------
 #   T6  perf-log4j12-async-noOpAppender.xml            count, async
 #   T7  perf-log4j12-async-location-noOpAppender.xml   count, async, location
 #
-# -----------------------------------------------------------------------------
-# 1. HOW EACH NUMBER WAS READ -- A FIELD, NOT A GETTER
-# -----------------------------------------------------------------------------
-# The deleted component, NoOpLog4jAppender, exposed its counter as a PUBLIC
-# FIELD holding an atomic long, incremented exactly once per appended event.
-# Each number below was therefore read as
+# PROVENANCE. Each number was read from a public field holding an atomic long,
+# incremented once per appended event, as `appender.count.get()` -- a field read
+# rather than an accessor call. It is the count for ONE replay of that id's lines
+# of the event script beside this file, in file order, with no timing,
+# thread-count, iteration, fork or warm-up dependence; replays in fresh virtual
+# machines reproduce it. The capture was taken against the original
+# configurations, before they were translated, and CANNOT BE REDONE, because the
+# counter field it was read from no longer exists. The transient harness that
+# drove those emissions is not committed; only the numbers are.
 #
-#     appender.count.get()
+# NOT THE SOLE ORACLE. Before comparing a recorded number with what the appender
+# received, the consuming gate holds it to the number of records the event script
+# replays into the same fixture -- 12 for T6, 1 for T7 -- and to the exact bytes
+# of this file. An edit to either artefact alone therefore fails, and a number
+# quietly lowered to accommodate an undercount cannot pass.
 #
-# -- A FIELD READ, NOT A GETTER CALL. The replacement plugin exposes the same
-# counter as an instance METHOD instead. The two generations are deliberately
-# asymmetric in API SHAPE while being identical in counting semantics: one
-# increment per appended event, in both.
+# HOW THE APPENDER IS RESOLVED. The plugin these fixtures wire exposes the same
+# counter as an instance method rather than a field: identical counting
+# semantics, different API shape. That asymmetry is resolved entirely on the
+# reading side -- no adapter, wrapper, shim or field-exposing subclass exists,
+# and no dependency was added, because the plugin is already on this module's
+# compile classpath. The gate resolves the appender BY NAME (NoOp, as referenced
+# from ASYNC) from the running configuration, which yields an Appender; it then
+# asserts the concrete type and casts before reading the counter, so a fixture
+# that bound that name to some other appender reports what it bound instead of
+# failing with a bare cast error.
 #
-# -----------------------------------------------------------------------------
-# 2. ONE PASS OF THE FIXED EVENT SCRIPT -- NOT A BENCHMARK RESULT
-# -----------------------------------------------------------------------------
-# Each number is the count for ONE SINGLE REPLAY of the fixed event script that
-# sits beside this file, emitting only that id's lines, in file order. It has no
-# timing dependence, no thread-count dependence, and no relationship whatsoever
-# to any benchmark iteration, fork or warm-up setting. Independent replays in
-# fresh virtual machines produced identical numbers, and the script carries
-# exactly 12 T6 records and 1 T7 record, so the two fixtures hold each other:
-# an edit to either one alone fails the comparison test.
-#
-# -----------------------------------------------------------------------------
-# 3. HOW THE REPLACEMENT IS LOOKED UP -- BY NAME, THEN ITS GETTER
-# -----------------------------------------------------------------------------
-# The API-shape asymmetry is resolved entirely on the reading side. NO adapter,
-# wrapper, shim or field-exposing subclass exists anywhere in this change to
-# bridge it, and no dependency was added: the replacement plugin was already on
-# this module's compile classpath. The comparison retrieves the appender BY NAME
-# -- NoOp, as referenced from ASYNC -- from the running configuration and calls
-# its counter accessor:
-#
-#     context.getConfiguration().getAppender("NoOp").getCount()
-#
-# -----------------------------------------------------------------------------
-# 4. CAPTURE ORDERING -- THE DIRECTION MUST NOT BE CONFLATED
-# -----------------------------------------------------------------------------
-# BEFORE: this baseline was captured against the deleted component and the
-#         ORIGINAL Log4j 1.x configurations, at the migration's base commit,
-#         while the Log4j 1.x classpath was still present and BEFORE any
-#         dependency removal. Once the migration's main-source change landed,
-#         that component and its public counter field ceased to exist and THE
-#         CAPTURE CANNOT BE REDONE. The transient harness that drove those
-#         emissions is not part of this change and was not committed; only the
-#         numbers below were.
-#
-# AFTER:  the comparison runs against the migrated configurations and the
-#         replacement plugin, and asserts EXACT equality with the numbers below.
-#         Acceptance is exact equality, nothing weaker.
-#
-# Within the capture, and again within the comparison, the ordering is the same
-# and it is LOAD-BEARING: resolve the appender while the context still runs,
-# replay the script, then STOP the context -- which is what stops the
+# ORDERING, WHICH IS LOAD-BEARING. Resolve the appender while the context still
+# runs, replay the script, then STOP the context -- which is what stops the
 # asynchronous wrapper and drains its buffer -- and only THEN read the counter.
-# Both configurations increment the counter on the wrapper's own background
-# thread, so a read taken before the drain under-counts. That was demonstrated
-# rather than assumed: an undrained read of T7 observes 0, against its drained
-# value of 1, on every attempt. An under-count is NEVER to be "fixed" by
-# sleeping and hoping, and NEVER by lowering a recorded number. A MISMATCH IS A
-# DEFECT IN THE MIGRATION AND IS FIXED IN THE MIGRATION.
+# Both configurations increment on the wrapper's background thread, so a read
+# taken before the drain under-counts: an undrained read of T7 observes 0 against
+# its drained value of 1, on every attempt. An under-count is never resolved by
+# sleeping and hoping, and never by lowering a recorded number. A mismatch is a
+# defect in the translated configuration and is fixed there.
 #
-# -----------------------------------------------------------------------------
-# THE PAYLOAD
-# -----------------------------------------------------------------------------
-# Exactly two data lines, T6 first and T7 second, each matching ^T[67]=[0-9]+$
-# with no space around the equals sign. Everything above is commentary: the
-# consuming gate skips comment and blank lines and validates every payload line
-# strictly, so this prose can be read by a person without loosening the grammar.
+# THE PAYLOAD. Exactly two data lines, T6 first and T7 second, each matching
+# ^T[67]=[0-9]+$ with no space around the equals sign. Everything above is
+# commentary: the consuming gate skips comment and blank lines and validates
+# every payload line strictly, so this prose can be read by a person without
+# loosening the grammar.
 T6=12
 T7=1

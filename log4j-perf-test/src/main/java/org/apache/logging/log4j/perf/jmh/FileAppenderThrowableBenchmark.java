@@ -47,8 +47,8 @@ import org.openjdk.jmh.annotations.Warmup;
 import org.slf4j.LoggerFactory;
 
 /**
- * Benchmarks Log4j 2, the arm formerly driven by Log4j 1 (now also native Log4j 2, against the migrated Log4j 1
- * configuration), Logback and JUL using the ERROR level which is enabled for this test.
+ * Benchmarks Log4j 2 in two separately configured logger contexts, Logback and JUL using the ERROR level which is
+ * enabled for this test.
  * The configuration for each writes to disk.
  */
 @State(Scope.Benchmark)
