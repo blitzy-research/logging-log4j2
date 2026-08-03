@@ -24,7 +24,7 @@
     </File>
   </Appenders>
   <Loggers>
-    <Root level="error" additivity="true">
+    <Root level="error">
       <AppenderRef ref="TestLogfile"/>
     </Root>
   </Loggers>

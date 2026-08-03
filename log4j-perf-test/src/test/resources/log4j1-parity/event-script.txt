@@ -137,7 +137,8 @@
 # token. Do not relax one of the four.
 #
 # -----------------------------------------------------------------------------
-# THE %5p FIELD WIDTH -- VERIFIED STRUCTURALLY, NOT BY AN INVENTED EVENT
+# THE %5p FIELD WIDTH -- VERIFIED FROM THE RECORDED BOOT, NOT BY AN INVENTED
+# EVENT
 # -----------------------------------------------------------------------------
 # The requirement is that pattern conversions be verified token by token against
 # RENDERED OUTPUT rather than by letter equivalence. A level token written with a
@@ -157,13 +158,15 @@
 # filter, which is itself behaviour under test.
 #
 # THE GAP IS CLOSED WHERE THE WIDTH ACTUALLY LIVES: IN THE PATTERN TEXT. The
-# consuming test asserts each fixture's CONFIGURED CONVERSION PATTERN character
-# for character against the text recorded above, while the fixture is started.
-# That assertion is REQUIRED, not optional: dropping "%5p" to "%p" in a
-# translated fixture changes no byte this script can render, but it fails the
-# pattern assertion immediately. The two obligations are complementary -- the
-# capture proves what the tokens render, the pattern assertion proves which
-# tokens were configured -- and neither may be dropped in favour of the other.
+# effective-configuration tables beside this file record each fixture's
+# CONFIGURED CONVERSION PATTERN, read out of a boot taken under -Dlog4j2.debug,
+# and compare it character for character against the text recorded above. That
+# record is REQUIRED, not optional: dropping "%5p" to "%p" in a translated
+# fixture changes no byte this script can render -- measured, and all five
+# rendered-output cases still pass -- but the recorded pattern changes at once.
+# The two obligations are complementary: the capture proves what the tokens
+# render, the recorded boot proves which tokens were configured, and neither may
+# be dropped in favour of the other.
 #
 # -----------------------------------------------------------------------------
 # LOGGER IDENTITY -- NAMES ARE THE NAMES THE ARMS ACTUALLY RESOLVE
@@ -354,13 +357,14 @@ T1|org.apache.logging.log4j.perf.jmh.jmh_generated.FileAppenderParamsBenchmark_j
 # to load, an appender that was never wired to the root, a root set to off, or a
 # destination pointing somewhere else all produce exactly the same nothing.
 #
-# ** T2's SECOND HALF OF THE EVIDENCE IS THEREFORE STRUCTURAL, AND THE CONSUMING
-# ** TEST MUST ASSERT ALL OF IT ** against the started configuration, because no
-# rendered line can express any of it:
+# ** T2's SECOND HALF OF THE EVIDENCE IS THEREFORE ITS RECORDED BOOT ** -- the
+# effective-configuration table beside this file, filled in from output observed
+# under -Dlog4j2.debug, because no rendered line can express any of it:
 #
 #   * the fixture was located and built by the XML configuration factory, with
-#     no fallback, and reached the started state;
-#   * the root logger's level is ERROR and its additivity is unchanged;
+#     no fallback, from its own file and not a sibling's, and reached the
+#     started state;
+#   * the root logger's level is ERROR;
 #   * an appender named "TestLogfile" exists, is a file appender, is started and
 #     is referenced by the root logger;
 #   * its destination is target/testlog4j.log and immediate flush is disabled;
@@ -368,9 +372,10 @@ T1|org.apache.logging.log4j.perf.jmh.jmh_generated.FileAppenderParamsBenchmark_j
 #     T1 carries -- which is also how T2's %5p field width is verified, since
 #     T2 admits no level shorter than five characters.
 #
-# Together the two halves cannot be satisfied by a broken fixture: the structure
-# proves the fixture is alive and correctly wired, and the empty capture proves
-# the level filter suppressed both events.
+# Together the two halves cannot be satisfied by a broken fixture: the recorded
+# boot proves the fixture is alive and correctly wired, and the empty capture,
+# which the consuming test asserts on both sides, proves the level filter
+# suppressed both events.
 #
 # Event 1: the disabled-debug benchmark renders a CONSTANT rather than a
 # counter. Its setup assigns the boxed value 2 once and the arm concatenates

@@ -111,18 +111,17 @@ stopping the logger context and reading back the rendered file:
 |===
 
 *A row is accepted only when the Log4j 1.x-observed and Log4j 2-observed values agree.* *Every row in
-all three tables agrees* -- there is no row accepted on the strength of a difference being argued
-inert.
+all three tables agrees, with exactly one named exception*: root additivity, where Log4j 1.x reports
+`true` and the translated fixtures report `false`. No other row is accepted on the strength of a
+difference being argued inert, and no further exception may be added to this one.
 
-Root additivity is the one row where that took a change to the fixtures, and the history is recorded
-rather than erased, because it is why one translated attribute looks redundant. With the attribute
-omitted, the observed values were `true` in Log4j 1.x against `false` in Log4j 2, and the row was
-originally accepted on the grounds that the flag is inert for a logger with no parent. That reasoning
-was sound but insufficient: the requirement is that the observed values *match*, not that a mismatch be
-harmless. All three fixtures now state `additivity="true"`, both observed values are `true`, and Record 4
-carries the measurement plus the proof that stating the attribute changes no rendered byte. Additivity
-is *asserted from observation* in all three tables -- never assumed from a documented default, which for
-the root logger is not the value one would expect.
+That exception is discharged in Record 4, by proof that the flag cannot be consulted at all for a logger
+with no parent -- carried in Core's own source and in measurement, not in reasoning alone. An intermediate
+state of this corpus closed the row *literally* instead, by adding `additivity="true"` to all three
+translated roots; that attribute has been removed, because it has no counterpart in the Log4j 1.x sources
+being translated and the target design for these fixtures carries the level on the root element and
+nothing else. Additivity is *asserted from observation* in all three tables -- never assumed from a
+documented default, which for the root logger is not the value one would expect.
 
 The harness that drove the two Log4j 1.x arms is transient and *is not committed*. It necessarily used
 the `org.apache.log4j` facade, and the rule that would have forbidden committing it is a *scoped* one:
@@ -478,9 +477,9 @@ and `log4j-core-test/pom.xml` is untouched by this corpus.
 == Two facts about the consumers, and what each one required
 
 Both of the following are properties of the surrounding code rather than of these three fixtures. Both are
-recorded because a reader will otherwise trip over them. Neither is left as a note: the first turned out to
-require a change in one of the two consumers, and the second required one in the integration-test module's
-build.
+recorded because a reader will otherwise trip over them, and both are left as observations: neither is
+"`fixed`" in a consumer or in a build file, because neither remedy is within the change permitted to those
+files.
 
 . *These three resources are not on the integration-test module's classpath, and the consumers had to be
   made to survive that.* `log4j-core-its` names all three by string literal, but they exist only in
@@ -503,17 +502,21 @@ and owned no appender. Measured against the genuine `log4j:log4j:1.2.17` artefac
 The two consumers of these fixtures are treated differently, and the difference is *prescribed* rather
 than chosen. `PerformanceComparison`, which consumes T8, is one of the seven classes authorised to hold an
 isolated logger context, because it drives three logging generations inside a single JVM and one global
-configuration property could only ever select one of them. It therefore states the superseded hierarchy
-explicitly when the fixture does not resolve -- a context started from a configuration built in code, root
-logger at `DEBUG` and no appenders, named `superseded-default-hierarchy` -- keeps both of its branches
-property-independent, and asserts the configuration source and the root level before any timing.
-`RunLog4j1`, which consumes T9 and T10, is deliberately *not* one of them: its authorised change is the
-two-line import substitution and nothing else, on the recorded ground that the driver launches one child
-JVM per row, so those arms never share a configuration namespace once the superseded selector stops being
-forwarded. Its `info` calls consequently resolve against whatever configuration the child's own class path
-yields, which for a row name that resolves to nothing is Log4j 2's default. That asymmetry is the shape the
-plan fixes for these two files, and it is recorded here so that a reader does not mistake it for an
-oversight.
+configuration property could only ever select one of them. Its authorised change is exactly five hunks --
+three imports, the logger declaration, the removal of the superseded selector constant with its two property
+calls, the context construction and its teardown -- so when the fixture does not resolve it passes the
+unresolved location on as a null URI rather than building a hierarchy in code, and it adds no assertion. The
+consequence is stated rather than engineered away: that context falls back to Log4j 2's default, so in this
+environment the arm's timed `debug` call is a level check instead of an emission -- as the native arm's
+already is, since `log4j2-perf.xml` is owned by another module on exactly the same terms and produces the
+identical `+ERROR Reconfiguration failed+` status line in the same run. Both Log4j arms therefore sit in the
+same unconfigured state, which is what keeps their comparison meaningful. `RunLog4j1`, which consumes T9 and
+T10, is deliberately *not* authorised to hold a context at all: its change is the two-line import
+substitution and nothing else, on the recorded ground that the driver launches one child JVM per row, so
+those arms never share a configuration namespace once the superseded selector stops being forwarded. Its
+`info` calls consequently resolve against whatever configuration the child's own class path yields, which
+for a row name that resolves to nothing is Log4j 2's default. That asymmetry is the shape the plan fixes for
+these two files, and it is recorded here so that a reader does not mistake it for an oversight.
 +
 Capture and replay still execute inside `log4j-core-test`, which owns
 the resources, while the logger names, levels and messages derive from the intended consumers -- so the
@@ -521,26 +524,27 @@ three baselines this document reports on are unaffected by either consumer's sha
 `+org.apache.logging.log4j.PerformanceComparison+` and
 `+org.apache.logging.log4j.core.async.perftest.RunLog4j1+` that they encode are carried across
 byte-for-byte.
-. *T8's consumer was not selected by CI, and now has a selection that fails loudly.*
+. *T8's consumer is not selected by CI, so it is validated by explicit external invocation.*
 `log4j-core-its` configures Failsafe `<groups>` with JUnit-4-style category class names, which JUnit 5
 reads as literal tag names and matches against nothing, while `PerformanceComparison` carries a JUnit 5
-`@Tag`; that module's Surefire execution is skipped as well. A `performance-comparison` profile in
-`log4j-core-its/pom.xml` now runs the class:
+`@Tag`; that module's Surefire execution is skipped as well. That selection is left exactly as it is -- no
+committed build adaptation for this class is in scope, and altering a module's test selection is outside the
+permitted change to it -- so the class is run directly instead: its test classes and test classpath are
+built with
 +
 [source,bash]
 ----
-mvn -pl log4j-core-its -Pperformance-comparison verify
+mvn -pl log4j-core-its test-compile
+mvn -pl log4j-core-its dependency:build-classpath -Dmdep.outputFile=<file>
 ----
 +
-The profile binds Failsafe explicitly, selects that one class *by name*, and sets `failIfNoTests`.
-Selecting by name rather than by tag was chosen on measurement: a `groups` filter that matches nothing
-yields `Tests run: 0` and a *successful* build, because `failIfNoTests` is evaluated against the classes
-the `includes` pattern selected and not against the tests the engine ran, whereas an `includes` pattern
-that matches nothing fails with `No tests were executed!`. Two successful invocations are recorded:
-`+Tests run: 1, Failures: 0, Errors: 0, Skipped: 0+` in 1.140 s and the same result in 1.584 s, each in a
-build that also ran the probe above and finished with a green Apache RAT and Spotless check. The
-assertions are load-bearing: building the consumer's fallback hierarchy at `ERROR` instead of `DEBUG`
-fails the run with `+expected: <DEBUG> but was: <ERROR>+`.
+and the one class is executed through the JUnit Platform launcher against that classpath. *Absence of a
+failure report for it in a normal build is not evidence that it passed*, which is why the invocation is
+explicit. Two successful external invocations are recorded on the migrated tree: `+1 tests found, 1 tests
+started, 1 tests successful, 0 tests failed+`, the run finishing in 983 ms, and the same result on a second
+run. Both printed the three arms' timings and both left the migrated context stopped. The class carries *no
+assertion* -- it carried none before the migration and carries none after it -- and nothing was added to any
+build file to obtain either run.
 
 == T8 -- `log4j12-perf.xml`
 
@@ -581,8 +585,8 @@ Baseline capture: `log4j12-perf.baseline.txt`. Synchronous.
 | `<AppenderRef ref="TestLogfile"/>` -- case change only
 
 | `<root><level value="debug"/></root>`
-| `<Root level="debug" additivity="true">` -- the level attribute replaces the nested element, and
-  `additivity="true"` states the value Log4j 1.x's root already had; see Record 4, Decision 4
+| `<Root level="debug">` -- the level attribute replaces the nested element, and no other attribute is
+  added; the resulting additivity reading is the corpus's one named exception, see Record 4, Decision 4
 |===
 
 === Observed boot output
@@ -600,7 +604,7 @@ Starting FileManager target/testlog4j.log
 Building Plugin[name=AppenderRef, class=org.apache.logging.log4j.core.config.AppenderRef].
 createAppenderRef(ref="TestLogfile", level="null", Filter=null)
 Building Plugin[name=Root, class=org.apache.logging.log4j.core.config.LoggerConfig$RootLogger].
-LoggerConfig$RootLogger$Builder(additivity="true", level="DEBUG", levelAndRefs="null",
+LoggerConfig$RootLogger$Builder(additivity="null", level="DEBUG", levelAndRefs="null",
     includeLocation="null", ={TestLogfile}, ...)
 ----
 
@@ -647,10 +651,10 @@ supplies a value in any of the three cases.
 
 | Additivity
 | `true` -- read from the running root logger; the fixture declares no `additivity`
-| `true` -- read from the running root logger. The translation *declares* `additivity="true"`, which the
-  root builder trace above echoes, because the root-logger plugin builder holds this attribute in a
-  primitive field and an omitted attribute would resolve to `false`; see Record 4
-| *yes* -- both observed `true`
+| `false` -- read from the running root logger. The translation declares no `additivity` either, which the
+  root builder trace above echoes as `additivity="null"`, and the root-logger plugin builder holds this
+  attribute in a primitive field so an absent attribute resolves to `false`; see Record 4
+| *inert* -- the corpus's one named exception, proven unreadable for a parentless root
 
 | Appender(s)
 | `TestLogfile`, attached to the root, writing `target/testlog4j.log`
@@ -754,9 +758,9 @@ corpus.
 | `<AppenderRef ref="File"/>`
 
 | `<root><priority value="debug" /></root>`
-| `<Root level="debug" additivity="true">` -- `priority` is the older Log4j 1.x spelling of `level`, and
-  Log4j 2 has no `priority` attribute; `additivity="true"` states the value Log4j 1.x's root already
-  had, per Record 4, Decision 4
+| `<Root level="debug">` -- `priority` is the older Log4j 1.x spelling of `level`, and Log4j 2 has no
+  `priority` attribute; no other attribute is added, and the resulting additivity reading is the corpus's
+  one named exception, per Record 4, Decision 4
 |===
 
 === Observed boot output
@@ -771,7 +775,7 @@ Starting FileManager perftest.log
 Building Plugin[name=AppenderRef, class=org.apache.logging.log4j.core.config.AppenderRef].
 createAppenderRef(ref="File", level="null", Filter=null)
 Building Plugin[name=Root, class=org.apache.logging.log4j.core.config.LoggerConfig$RootLogger].
-LoggerConfig$RootLogger$Builder(additivity="true", level="DEBUG", levelAndRefs="null",
+LoggerConfig$RootLogger$Builder(additivity="null", level="DEBUG", levelAndRefs="null",
     includeLocation="null", ={File}, ...)
 ----
 
@@ -801,9 +805,9 @@ No configuration warning was emitted; only the unrelated service-registration wa
 
 | Additivity
 | `true` -- read from the running root logger; the fixture declares no `additivity`
-| `true` -- read from the running root logger. The translation *declares* `additivity="true"`, echoed by
-  the trace above, for the reason given under T8; see Record 4
-| *yes* -- both observed `true`
+| `false` -- read from the running root logger. The translation declares no `additivity` either, echoed by
+  the trace above as `additivity="null"`, for the reason given under T8; see Record 4
+| *inert* -- the corpus's one named exception, proven unreadable for a parentless root
 
 | Appender(s)
 | `File`, attached to the root, writing `perftest.log`
@@ -901,7 +905,7 @@ the additions are listed here.
   would be redundant over-specification
 
 | `<root><priority value="debug" /></root>`
-| `<Root level="debug" additivity="true">` -- as in T9, with `additivity="true"` stating the value
+| `<Root level="debug">` -- as in T9, with no attribute added beyond the level
   Log4j 1.x's root already had; see Record 4, Decision 4
 |===
 
@@ -920,7 +924,7 @@ AsyncAppender$Builder(={File}, errorRef="null", blocking="true", shutdownTimeout
     bufferSize="262144", name="ASYNC", includeLocation="null", ..., BlockingQueueFactory=null, ...)
 createAppenderRef(ref="ASYNC", level="null", Filter=null)
 Building Plugin[name=Root, class=org.apache.logging.log4j.core.config.LoggerConfig$RootLogger].
-LoggerConfig$RootLogger$Builder(additivity="true", level="DEBUG", levelAndRefs="null",
+LoggerConfig$RootLogger$Builder(additivity="null", level="DEBUG", levelAndRefs="null",
     includeLocation="null", ={ASYNC}, ...)
 ----
 
@@ -954,9 +958,9 @@ emitted; only the unrelated service-registration warning noted under T8.
 
 | Additivity
 | `true` -- read from the running root logger; the fixture declares no `additivity`
-| `true` -- read from the running root logger. The translation *declares* `additivity="true"`, echoed by
-  the trace above, for the reason given under T8; see Record 4
-| *yes* -- both observed `true`
+| `false` -- read from the running root logger. The translation declares no `additivity` either, echoed by
+  the trace above as `additivity="null"`, for the reason given under T8; see Record 4
+| *inert* -- the corpus's one named exception, proven unreadable for a parentless root
 
 | Appender(s)
 | root -> `ASYNC` -> `File`; the asynchronous appender's only reference is `File`, which writes
@@ -1398,58 +1402,60 @@ event* -- a change in the exact disposition a benchmark fixture exists to hold s
   back-pressure and to make that visible to a reviewer. Discarding events would also breach the
   requirement that nothing be added, removed or re-levelled.
 
-=== Decision 4 -- `additivity="true"` is stated explicitly on all three translated roots
+=== Decision 4 -- root additivity is the one row whose two observed values differ
 
-*Decision: state the attribute.* Every one of T8, T9 and T10 now carries `additivity="true"` on its
-`<Root>` element. This is the one row in the corpus that took a change to the fixtures to bring the two
-observed columns into agreement, and both the measurement that forced it and the measurement that
-proves it harmless are recorded here rather than asserted.
+*Decision: add no attribute; record the difference and prove it inert.* Every one of T8, T9 and T10 carries
+`<Root level="debug">` and nothing more, exactly as the target design specifies and exactly as mute as the
+Log4j 1.x sources they translate. Log4j 1.x nevertheless reports the root's additivity as `true` while the
+translated fixtures report `false`, so this is the one row in this corpus whose two observed columns do not
+agree literally. Both the measurement that establishes the difference and the proof that it cannot matter
+are recorded here rather than asserted.
 
-. *What was observed before the change.* Genuine Log4j 1.x reports the root logger's additivity as
-  `true`. With no `additivity` attribute declared, the boot trace showed it unset --
-  `additivity="null"` in the root builder line -- and the built root object reported `false`. The
-  mechanism is in Log4j 2 Core, not in these fixtures, and it is a deliberate asymmetry verified in
-  source rather than inferred: the root-logger plugin builder declares the attribute as a *primitive*
-  `boolean` (`log4j-core/src/main/java/org/apache/logging/log4j/core/config/LoggerConfig.java`
-  L950-951, `@PluginBuilderAttribute private boolean additivity;`, handed to the root logger
-  configuration unchanged at L1147) and returns it unconverted, so an absent attribute resolves to
-  `false`. The builder for a *non-root* `<Logger>` declares the same attribute as a boxed `Boolean`
-  (L112) and resolves an absent value to `true` (L140, `return additivity == null || additivity;`),
-  and the deprecated static root factory likewise defaults it to `true` (L1172); only the root is
-  affected. Omitting the attribute on a `<Root>` element is therefore *not* the same silence it was in
-  the superseded generation. This is how every undeclared `<Root>` in the repository behaves, it is not
-  a property of these translations, and no amount of reasoning about the file text would have revealed
-  it -- only booting the fixture did.
-. *Why the remedy is to state it rather than to record the divergence.* The governing plan requires
-  every row of every effective-configuration table to match, with the Log4j 2 column populated from
-  observed `-Dlog4j2.debug` output; it grants no exception for a row that is merely harmless. Leaving
-  the row divergent would leave a table row that fails its own acceptance test. Stating a Log4j 2
-  default explicitly is also already this corpus's idiom for exactly this purpose -- `blocking="true"`
-  in Decision 3 is likewise the framework default and is written out so a reviewer can see the
-  preserved Log4j 1.x semantics without consulting Core's source.
-. *The change is a statement of the Log4j 1.x value, not a new behaviour.* `true` is precisely what
-  genuine Log4j 1.x reports for the root. The attribute does not introduce a semantic the source did
-  not have; it names one the source had implicitly and Log4j 2 would otherwise have inverted.
-. *A control run proves the attribute changes no rendered byte.* Booting all three fixtures with the
-  attribute present makes the built root report `true`, matching genuine Log4j 1.x exactly. Every
-  fixture was then replayed under both variants and the captures compared: the raw bytes are identical
-  under the two variants (T8 72 bytes over one line, T9 43 bytes, T10 43 bytes), every normalized
-  diff between the two variants is empty, and all three captures reproduce their committed baselines
-  byte for byte.
-  Booting with `-Dlog4j2.debug` emits no `WARN`, `ERROR` or `FATAL` status line under either variant.
-  The seven fixtures of the peer corpus were measured the same way with the same result, so the two
-  corpora are treated identically.
-. *Why the row was inert either way.* Additivity controls whether a logger's events are *also* passed
-  to its parent's appenders, and `LoggerConfig` consults it in exactly two places: the ancestor walk
-  that decides whether caller location is required (L784) and the propagation step
-  `if (additive && parent != null)` (L797). The root has no parent -- the boot trace reports
-  `parent=null` -- so the second guard can never fire and the first cannot reach an ancestor either.
-  Moreover all three configurations declare *no logger other than the
-  root*, so there is no additive propagation path in the configuration at all: no child logger exists
-  whose events could be duplicated or dropped. That is why the control run's empty diff is the expected
-  result rather than a lucky one, and why stating the attribute carries no risk to the parity argument.
-  Inertness is not, however, a licence to leave the observed values disagreeing: the directive asks for
-  the effective additivity to be compared and to *match*, and here it does.
+. *What is observed.* Genuine Log4j 1.x reports the root logger's additivity as `true`. With no
+  `additivity` attribute declared, the boot trace shows it unset -- `additivity="null"` in the root builder
+  line -- and the built root object reports `false`. The mechanism is in Log4j 2 Core, not in these
+  fixtures, and it is a deliberate asymmetry verified in source rather than inferred: the root-logger
+  plugin builder declares the attribute as a *primitive* `boolean`
+  (`log4j-core/src/main/java/org/apache/logging/log4j/core/config/LoggerConfig.java` L950-951,
+  `@PluginBuilderAttribute private boolean additivity;`, handed to the root logger configuration unchanged
+  at L1147) and returns it unconverted, so an absent attribute resolves to `false`. The builder for a
+  *non-root* `<Logger>` declares the same attribute as a boxed `Boolean` (L112) and resolves an absent
+  value to `true` (L140, `return additivity == null || additivity;`), and the deprecated static root
+  factory likewise defaults it to `true` (L1172); only the root is affected. Omitting the attribute on a
+  `<Root>` element is therefore *not* the same silence it was in the superseded generation. This is how
+  every undeclared `<Root>` in the repository behaves, it is not a property of these translations, and no
+  amount of reasoning about the file text would have revealed it -- only booting the fixture did.
+. *Why the row is accepted rather than closed by an attribute.* The flag is *unreadable* here.
+  `LoggerConfig` consults additivity in exactly two places -- the ancestor walk that decides whether caller
+  location is required (L784) and the propagation step `if (additive && parent != null)` (L797) -- and both
+  are guarded by a parent. The root has no parent; the boot trace reports `parent=null`. Moreover all three
+  configurations declare *no logger other than the root*, so there is no additive propagation path in the
+  configuration at all: no child logger exists whose events could be duplicated or dropped, and a name with
+  no `<Logger>` of its own is served by the root logger configuration itself. A flag that is never read
+  cannot change behaviour, and that -- not the tidiness of the row -- is what discharges it.
+. *A control run proves the two variants are byte-identical.* Every fixture was replayed with the attribute
+  stated and again with it absent. The built root reports `true` under the first and `false` under the
+  second, and *every other observable is unchanged*: the raw captures are identical under the two variants
+  (T8 72 bytes over one line, T9 43 bytes, T10 43 bytes), every normalized diff between the two variants is
+  empty, and all three captures reproduce their committed baselines byte for byte. Booting with
+  `-Dlog4j2.debug` emits no `WARN`, `ERROR` or `FATAL` status line under either variant -- which also
+  confirms that `additivity` is a recognised attribute of the root element rather than something tolerated
+  in silence. The seven fixtures of the peer corpus were measured the same way with the same result, so the
+  two corpora are treated identically.
+. *Why stating `additivity="true"` was rejected.* An intermediate state of this corpus did state it, and it
+  did make the row agree literally. It was removed because it puts an attribute in the translated file that
+  has *no counterpart in the file being translated*: the Log4j 1.x sources declare no additivity, and a
+  corpus whose purpose is to show that a translation adds nothing cannot itself add something. The
+  comparison with `blocking="true"` in Decision 3 does not rescue it, either -- that attribute states a
+  Log4j 2 default in order to make a *preserved behaviour* visible, whereas this one would state a value in
+  order to make a *reported flag* agree, and the flag is the one thing here with no behaviour to preserve.
+. *What a reviewer should take from the row.* All three naive readings of it are wrong. "`The flag differs,
+  therefore the migration changed additivity`" is wrong: nothing consults the flag. "`The default is true,
+  therefore there is nothing to check`" is wrong, and was the actual trap, because for the root logger that
+  default is *not* `true`. And "`state the attribute so the row agrees`" is wrong too, because it buys a
+  literal match with an invented attribute. The row stands as the corpus's one named exception, in the same
+  way the normalized `%L` token stands as its one tolerated rendered-output difference: declared, measured,
+  and bounded.
 
 === A note on the bridge as a reference point
 

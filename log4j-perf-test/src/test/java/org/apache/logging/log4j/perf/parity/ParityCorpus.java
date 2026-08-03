@@ -17,7 +17,6 @@
 package org.apache.logging.log4j.perf.parity;
 
 import java.io.IOException;
-import java.net.URI;
 import java.net.URISyntaxException;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
@@ -35,8 +34,6 @@ import org.apache.logging.log4j.Level;
 import org.apache.logging.log4j.LogBuilder;
 import org.apache.logging.log4j.Logger;
 import org.apache.logging.log4j.core.LoggerContext;
-import org.apache.logging.log4j.core.config.Configuration;
-import org.apache.logging.log4j.core.config.ConfigurationSource;
 import org.apache.logging.log4j.core.config.Configurator;
 import org.junit.jupiter.api.Assertions;
 
@@ -47,11 +44,10 @@ import org.junit.jupiter.api.Assertions;
  * code</em>, and it holds only what that requires: the fixed event script parsed from
  * {@value #EVENT_SCRIPT_RESOURCE} and replayed by {@link #replay(LoggerContext, String)}; the normalizer
  * {@link #normalize(String)}, which substitutes exactly four rendered elements and never a fifth;
- * {@link #startContext(String, String)}, which boots a configuration from its classpath
+ * and {@link #startContext(String, String)}, which boots a configuration from its classpath
  * {@link java.net.URI} and therefore reads, sets and clears <em>no</em> system property — the property lookup is
  * skipped entirely, which is what lets several configurations boot in one virtual machine without contending
- * over one global key; and {@link #assertBuiltFromResource(Configuration, String)}, which establishes that the
- * configuration a case booted came from the resource that case named.
+ * over one global key.
  * </p>
  * <p>
  * Three contracts live here rather than in the consuming tests, so that every consumer observes the same
@@ -150,15 +146,6 @@ final class ParityCorpus {
      */
     private static final Pattern DATA_LINE =
             Pattern.compile("^(T[1-7])\\|([^|]+)\\|(DEBUG|INFO|ERROR)\\|([^|]+)(?:\\|([^|]+))?$");
-
-    /**
-     * Grammar of a recorded-count record, {@code <configId>=<count>}, as used by the counting fixtures' baseline.
-     * <p>
-     * It is anchored and admits digits only, so a record that has been reordered, duplicated, renamed or given a
-     * non-numeric count cannot be read as a valid one.
-     * </p>
-     */
-    private static final Pattern COUNT_RECORD = Pattern.compile("^(T[1-7])=([0-9]+)$");
 
     /** Logger acquired by the plain file-appender benchmark, from a class literal. */
     private static final String FILE_APPENDER_LOGGER = "org.apache.logging.log4j.perf.jmh.FileAppenderBenchmark";
@@ -461,40 +448,6 @@ final class ParityCorpus {
             }
         }
         return Collections.unmodifiableList(records);
-    }
-
-    /**
-     * Parses an ordered {@code <configId>=<count>} fixture into an insertion-ordered map.
-     * <p>
-     * The counting fixtures record their observed event counts as such a fixture, and <em>the order of its records
-     * is part of the contract</em>: the two fixtures differ only in whether location is captured, so a reader that
-     * accepted them in either order would also accept a baseline in which their two counts had been swapped. This
-     * parser therefore preserves encounter order in the returned map and rejects a duplicated id outright, leaving
-     * the caller to assert the exact expected sequence.
-     * </p>
-     *
-     * @param resourcePath absolute classpath path of the fixture
-     * @return an unmodifiable map from configuration id to recorded count, in the fixture's own record order
-     * @throws IllegalStateException if the fixture is missing, unreadable, malformed, or repeats an id
-     */
-    static Map<String, Integer> readRecordedCounts(final String resourcePath) {
-        final List<String> records = dataLines(resourcePath);
-        final Map<String, Integer> counts = new LinkedHashMap<>();
-        for (int recordIndex = 0; recordIndex < records.size(); recordIndex++) {
-            final String record = records.get(recordIndex);
-            final Matcher matcher = COUNT_RECORD.matcher(record);
-            if (!matcher.matches()) {
-                throw new IllegalStateException(
-                        "malformed count record " + (recordIndex + 1) + " in " + resourcePath + ": " + record);
-            }
-            final String configId = matcher.group(1);
-            if (counts.containsKey(configId)) {
-                throw new IllegalStateException("duplicate configuration id " + configId + " at count record "
-                        + (recordIndex + 1) + " in " + resourcePath);
-            }
-            counts.put(configId, Integer.valueOf(matcher.group(2)));
-        }
-        return Collections.unmodifiableMap(counts);
     }
 
     /**
@@ -867,75 +820,6 @@ final class ParityCorpus {
             }
         }
         return starting;
-    }
-
-    /**
-     * Asserts that a booted configuration was built from the very classpath resource the case named.
-     * <p>
-     * A type check alone cannot establish this. Every fixture in this corpus is XML, four of them bind the same
-     * appender name to the same destination and differ only in a root level or a conversion pattern, so a
-     * configuration built from the wrong one of them would satisfy a type check and could still render bytes that
-     * pass a comparison. Naming the resource in the assertion is what pins each case to its own fixture.
-     * </p>
-     * <p>
-     * Comparison is on the resolved filesystem path rather than on the URI text, because the two sides reach the same
-     * file by different routes — the expectation through {@link Class#getResource(String)}, the configuration through
-     * the file the configuration factory opened — and their URI spellings need not agree character for character even
-     * when they denote one file. The scheme is asserted first, both to state the assumption the path resolution rests
-     * on and to turn a configuration loaded from somewhere other than the filesystem into a named failure rather than
-     * an exception.
-     * </p>
-     *
-     * @param configuration the configuration the isolated context booted
-     * @param configResourcePath absolute classpath path the case asked for, which the configuration must have come
-     *     from
-     */
-    static void assertBuiltFromResource(final Configuration configuration, final String configResourcePath) {
-        final ConfigurationSource source = configuration.getConfigurationSource();
-        Assertions.assertNotNull(
-                source,
-                "the fixture built for " + configResourcePath
-                        + " carries no configuration source, so what it was built from cannot be established");
-        final URI actualLocation = source.getURI();
-        Assertions.assertNotNull(
-                actualLocation,
-                "the fixture built for " + configResourcePath + " reports the location '" + source.getLocation()
-                        + "', which cannot be resolved to a URI");
-        final URL expectedLocation = ParityCorpus.class.getResource(configResourcePath);
-        Assertions.assertNotNull(expectedLocation, "missing configuration resource: " + configResourcePath);
-        final URI expectedUri;
-        try {
-            expectedUri = expectedLocation.toURI();
-        } catch (final URISyntaxException malformed) {
-            throw new AssertionError(
-                    "the configuration resource " + configResourcePath + " resolves to '" + expectedLocation
-                            + "', which cannot be expressed as a URI",
-                    malformed);
-        }
-        Assertions.assertEquals(
-                resolvedPath(expectedUri, "the configuration resource " + configResourcePath),
-                resolvedPath(actualLocation, "the configuration source of the fixture built for " + configResourcePath),
-                "the fixture was built from a different resource than " + configResourcePath
-                        + "; a configuration located by some other route can satisfy every structural assertion in"
-                        + " these gates and still render the bytes of another fixture");
-    }
-
-    /**
-     * Resolves a location to an absolute, normalized filesystem path so that two spellings of one file compare equal.
-     *
-     * @param location the location to resolve, which must be a filesystem location
-     * @param what what the failure message should call the location
-     * @return the resolved path in its string form
-     */
-    private static String resolvedPath(final URI location, final String what) {
-        Assertions.assertEquals(
-                "file",
-                location.getScheme(),
-                what + " is '" + location
-                        + "', which does not name a filesystem location; these gates compare the file a fixture was"
-                        + " built from, so a fixture read from anywhere else cannot be compared and must not pass"
-                        + " unchecked");
-        return Paths.get(location).toAbsolutePath().normalize().toString();
     }
 
     /**

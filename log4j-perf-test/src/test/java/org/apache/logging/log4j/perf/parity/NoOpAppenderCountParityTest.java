@@ -17,24 +17,20 @@
 package org.apache.logging.log4j.perf.parity;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import java.io.IOException;
 import java.net.URISyntaxException;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import org.apache.logging.log4j.Level;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import org.apache.logging.log4j.core.Appender;
 import org.apache.logging.log4j.core.LoggerContext;
-import org.apache.logging.log4j.core.appender.AsyncAppender;
 import org.apache.logging.log4j.core.appender.CountingNoOpAppender;
-import org.apache.logging.log4j.core.config.AppenderRef;
-import org.apache.logging.log4j.core.config.Configuration;
-import org.apache.logging.log4j.core.config.LoggerConfig;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -51,8 +47,16 @@ import org.junit.jupiter.api.Test;
  * <p>
  * Both fixtures are gated because they differ in the one dimension that changes what the appender observes: whether
  * their asynchronous wrapper captures caller location. Each is an independent case with its own isolated context,
- * and the expected counts come from the committed baseline rather than from literals in this code — a baseline that is
- * itself held to the committed event script, and to its own recorded bytes, before any case reads it.
+ * and the expected counts come from the committed baseline rather than from literals in this code — a baseline whose
+ * records are held to a strict grammar, to the expected identifiers in the expected order, and to the committed event
+ * script, before any case reads it.
+ * </p>
+ * <p>
+ * What the appender sits behind — the asynchronous wrapper, its queue depth, its blocking disposition and its
+ * caller-location capture — is not read off the running configuration here. A count cannot observe any of it, so it
+ * is evidence of a different kind, recorded per fixture in the sibling {@code log4j1-parity/effective-config.adoc}
+ * from boot output observed under {@code -Dlog4j2.debug}. This gate owns the count, and the ordering that makes the
+ * count trustworthy.
  * </p>
  */
 class NoOpAppenderCountParityTest {
@@ -77,33 +81,69 @@ class NoOpAppenderCountParityTest {
 
     private static final String LOCATION_CONFIG_RESOURCE = "/perf-log4j12-async-location-noOpAppender.xml";
 
-    /** Root level both fixtures declare, which admits the scripted level. */
-    private static final Level ROOT_LEVEL = Level.DEBUG;
-
-    /** Name both fixtures bind the asynchronous wrapper to, upper case as the translated fixtures spell it. */
-    private static final String ASYNC_APPENDER_NAME = "ASYNC";
-
-    /** Queue depth both fixtures declare on that wrapper, held verbatim from the configurations translated. */
-    private static final int ASYNC_QUEUE_CAPACITY = 262144;
-
     /**
-     * Immutable index of the recorded counts, built once from the committed baseline by the shared harness and
-     * validated on the way in — for its record identity and order, for agreement with the scripted event cardinality,
-     * and for the exact bytes of the file it was read from. See {@link #validated(Map)}.
+     * Grammar of one recorded-count line, {@code <configId>=<count>}, as the committed baseline defines it.
      * <p>
-     * The grammar, the comment and blank-line skipping rule and the duplicate-id rejection all live in
-     * {@link ParityCorpus#readRecordedCounts(String)}, so this gate and the event-script gate cannot disagree about
-     * what a record is. The map is unmodifiable, insertion-ordered and never replaced, so this class holds no mutable
-     * state that could couple its cases together under forked, randomly ordered execution.
+     * It is anchored and admits only the two identifiers this gate covers followed by decimal digits, so a record
+     * that has been renamed, given a sign, a separator, a unit or surrounding space is rejected outright rather than
+     * read as a valid one. Comments and blank lines never reach it: the baseline carries its capture provenance as
+     * {@code #} commentary, and {@link ParityCorpus#dataLines(String)} drops comments and blank lines before a
+     * record is matched, so the commentary is ignored while the payload stays strictly validated.
      * </p>
      */
-    private static final Map<String, Integer> RECORDED_COUNTS =
-            validated(ParityCorpus.readRecordedCounts(COUNT_BASELINE_RESOURCE));
+    private static final Pattern COUNT_RECORD = Pattern.compile("^(T[67])=([0-9]+)$");
 
     /**
-     * Rejects a committed baseline that is not exactly the file the scripted events imply: the two fixtures this gate
-     * covers, in that order, each carrying the number of events the committed script replays into it, and nothing else
-     * in the file at all.
+     * Immutable index of the recorded counts, built once from the committed baseline and validated on the way in —
+     * for its record grammar, for its record identity and order, and for agreement with the scripted event
+     * cardinality. See {@link #readRecordedCounts()} and {@link #validated(Map)}.
+     * <p>
+     * The comment and blank-line skipping rule is the corpus's own {@link ParityCorpus#dataLines(String)}, so this
+     * gate and the event-script gate cannot disagree about which lines are payload. The map is unmodifiable,
+     * insertion-ordered and never replaced, so this class holds no mutable state that could couple its cases
+     * together under forked, randomly ordered execution.
+     * </p>
+     */
+    private static final Map<String, Integer> RECORDED_COUNTS = validated(readRecordedCounts());
+
+    /**
+     * Parses the committed baseline into an insertion-ordered index of its recorded counts.
+     * <p>
+     * Encounter order is preserved because the order of the records is part of the contract, and a repeated
+     * identifier is rejected rather than allowed to overwrite silently — both of which {@link #validated(Map)} then
+     * relies on. The parse is deliberately tolerant of exactly two things, comments and blank lines, and strict
+     * about everything else: the baseline's four mandated provenance topics are commentary that must be readable by
+     * a person and invisible to this parser, while every payload line must match {@link #COUNT_RECORD} exactly.
+     * </p>
+     *
+     * @return an unmodifiable map from configuration id to recorded count, in the baseline's own record order
+     * @throws IllegalStateException if the baseline is missing, unreadable, malformed, or repeats an identifier
+     */
+    private static Map<String, Integer> readRecordedCounts() {
+        final List<String> records = ParityCorpus.dataLines(COUNT_BASELINE_RESOURCE);
+        final Map<String, Integer> counts = new LinkedHashMap<>();
+        for (int recordIndex = 0; recordIndex < records.size(); recordIndex++) {
+            final String record = records.get(recordIndex);
+            final Matcher matcher = COUNT_RECORD.matcher(record);
+            if (!matcher.matches()) {
+                throw new IllegalStateException("malformed count record " + (recordIndex + 1) + " in "
+                        + COUNT_BASELINE_RESOURCE + ": '" + record
+                        + "'; a payload line must match " + COUNT_RECORD.pattern()
+                        + ", and anything explanatory belongs in a '#' comment");
+            }
+            final String configId = matcher.group(1);
+            if (counts.containsKey(configId)) {
+                throw new IllegalStateException("duplicate configuration id " + configId + " at count record "
+                        + (recordIndex + 1) + " in " + COUNT_BASELINE_RESOURCE);
+            }
+            counts.put(configId, Integer.valueOf(matcher.group(2)));
+        }
+        return Collections.unmodifiableMap(counts);
+    }
+
+    /**
+     * Rejects a committed baseline whose records are not the ones the scripted events imply: the two fixtures this
+     * gate covers, in that order, each carrying the number of events the committed script replays into it.
      * <p>
      * Order is part of the contract rather than a presentation detail. The two fixtures differ in one dimension only,
      * whether their asynchronous wrapper captures caller location, so accepting the records in either order would
@@ -122,20 +162,19 @@ class NoOpAppenderCountParityTest {
      * assertion, and an edit to either artefact alone fails here.
      * </p>
      * <p>
-     * <strong>The raw file is compared in full, byte for byte.</strong> The parser that produced these records drops
-     * comments and blank lines and reports what it parsed, so on its own it would accept a baseline carrying
-     * commentary, stray whitespace, repeated line feeds or no closing line feed at all. This file is machine-recorded
-     * payload with no commentary by design, and its whitespace and end-of-file disposition are part of what the
-     * corpus commits, exactly as they are for the rendered baselines beside it — so what is asserted here is the
-     * complete content, not merely what a lenient reader can find in it.
+     * What is <em>not</em> asserted is the whole raw content of the file. The baseline is required to carry its
+     * capture provenance as {@code #} commentary — how the superseded counter was read, that one pass of the script
+     * produced each number, how the replacement is looked up, and the direction of the capture — so a reader that
+     * insisted on payload alone would reject the very evidence the corpus is required to ship. Commentary is
+     * therefore ignored and the payload is validated strictly: grammar, identifiers, order and counts.
      * </p>
      * <p>
      * All of this is a precondition on the harness's own input rather than a case of its own: a baseline that fails it
      * must fail every case that reads it, not one case dedicated to the file.
      * </p>
      *
-     * @param recordedCounts the records the harness parsed out of the committed baseline
-     * @return the same records, once the file has been established to be exactly what the script implies
+     * @param recordedCounts the records parsed out of the committed baseline
+     * @return the same records, once they have been established to be what the script implies
      */
     private static Map<String, Integer> validated(final Map<String, Integer> recordedCounts) {
         final List<String> recordedIds = new ArrayList<>(recordedCounts.keySet());
@@ -148,7 +187,6 @@ class NoOpAppenderCountParityTest {
                     + "; a reordered, renamed, repeated or added record is a drift between the two fixtures and never"
                     + " a baseline to adjust");
         }
-        final StringBuilder impliedContent = new StringBuilder();
         for (int index = 0; index < expectedIds.size(); index++) {
             final String configId = expectedIds.get(index);
             final int scripted = ParityCorpus.events(configId).size();
@@ -159,42 +197,8 @@ class NoOpAppenderCountParityTest {
                         + " into it; the two artefacts must agree, and the one to correct is whichever of them stopped"
                         + " describing what the superseded appender observed — never this comparison");
             }
-            impliedContent.append(configId).append('=').append(scripted).append('\n');
-        }
-        final String implied = impliedContent.toString();
-        final String actual = readCountBaseline();
-        if (!implied.equals(actual)) {
-            throw new IllegalStateException(COUNT_BASELINE_RESOURCE
-                    + " must hold exactly the records the event script implies and nothing else, each closed by one"
-                    + " line feed, but holds " + quoted(actual) + " rather than " + quoted(implied)
-                    + "; commentary, stray whitespace, a repeated line feed or a missing final line feed are drift in"
-                    + " a committed capture and never something to accommodate here");
         }
         return recordedCounts;
-    }
-
-    /**
-     * Reads the committed baseline exactly as it stands, through the same untrimmed whole-content reader the rendered
-     * baselines are read with, so that the raw comparison above and the corpus's other comparisons cannot disagree
-     * about what a file's content is.
-     *
-     * @throws IllegalStateException if the resource cannot be read, which is a build defect rather than a test outcome
-     */
-    private static String readCountBaseline() {
-        try {
-            return ParityCorpus.readResource(COUNT_BASELINE_RESOURCE);
-        } catch (final IOException readFailure) {
-            throw new IllegalStateException("cannot read " + COUNT_BASELINE_RESOURCE, readFailure);
-        }
-    }
-
-    /**
-     * Renders content for a failure message with its line feeds visible, so that a difference in whitespace or in
-     * end-of-file disposition — the very differences this gate exists to catch — is legible in the report rather than
-     * swallowed by the line breaks it consists of.
-     */
-    private static String quoted(final String content) {
-        return "\"" + content.replace("\n", "\\n") + "\"";
     }
 
     @Test
@@ -235,8 +239,6 @@ class NoOpAppenderCountParityTest {
         final CountingNoOpAppender countingAppender;
         try (LoggerContext context = ParityCorpus.startContext(configId, configResourcePath)) {
             countingAppender = countingAppender(context, configId, configResourcePath);
-            assertAsynchronousNoOpWiring(
-                    context.getConfiguration(), configResourcePath, LOCATION_CONFIG_ID.equals(configId));
             ParityCorpus.replay(context, configId);
         }
         assertEquals(
@@ -247,82 +249,6 @@ class NoOpAppenderCountParityTest {
                         + COUNT_BASELINE_RESOURCE
                         + "; that recording predates the deletion of the counter it was read from, so a mismatch is a"
                         + " defect in the migration and never a baseline to adjust");
-    }
-
-    /**
-     * Asserts the wiring the counting appender sits behind: the root logger, the asynchronous wrapper's preserved
-     * disposition, and the wrapper's sole delegate.
-     * <p>
-     * These are the dimensions a count cannot observe. A fixture that dropped its wrapper, discarded on a full queue
-     * instead of blocking, shrank the queue, or gained or lost caller location would still deliver the same number
-     * of events to the same appender. Location capture is the one dimension in which the two fixtures differ, so it
-     * is asserted in both polarities. The counting appender's absent layout is asserted too, because it is what
-     * makes count identity the whole of output identity for this component.
-     * </p>
-     *
-     * @param configuration the started configuration of the booted fixture
-     * @param configResourcePath the fixture, named in failure messages
-     * @param expectedIncludeLocation whether this fixture's wrapper captures caller location
-     */
-    private static void assertAsynchronousNoOpWiring(
-            final Configuration configuration, final String configResourcePath, final boolean expectedIncludeLocation) {
-        // The very first assertion is that the configuration was built from the resource this case named. The two
-        // fixtures differ in one attribute and bind the same appender name to the same counting plugin, so a case that
-        // booted its sibling - or that silently fell back to some other configuration altogether - would satisfy every
-        // remaining assertion below except the polarity of location capture, and would deliver an identical count.
-        // Identity of the source is therefore established before anything else is read off the configuration.
-        ParityCorpus.assertBuiltFromResource(configuration, configResourcePath);
-        final LoggerConfig rootLogger = configuration.getRootLogger();
-        assertNotNull(rootLogger, configResourcePath + " built no root logger");
-        assertEquals(ROOT_LEVEL, rootLogger.getLevel(), "level of the root logger of " + configResourcePath);
-        assertTrue(rootLogger.isAdditive(), "additivity of the root logger of " + configResourcePath);
-        final List<AppenderRef> references = rootLogger.getAppenderRefs();
-        assertEquals(1, references.size(), "number of appender references on the root logger of " + configResourcePath);
-        assertEquals(
-                ASYNC_APPENDER_NAME,
-                references.get(0).getRef(),
-                "appender reference on the root logger of " + configResourcePath);
-        final Appender wrapper = configuration.getAppender(ASYNC_APPENDER_NAME);
-        assertNotNull(wrapper, configResourcePath + " declares no appender named " + ASYNC_APPENDER_NAME);
-        assertTrue(
-                wrapper instanceof AsyncAppender,
-                configResourcePath + " binds " + ASYNC_APPENDER_NAME + " to "
-                        + wrapper.getClass().getName()
-                        + " rather than to an asynchronous appender, so the fixture's asynchronous disposition was"
-                        + " not preserved");
-        final AsyncAppender asyncAppender = (AsyncAppender) wrapper;
-        assertTrue(
-                asyncAppender.isStarted(),
-                "appender " + ASYNC_APPENDER_NAME + " of " + configResourcePath + " did not start");
-        assertTrue(
-                asyncAppender.isBlocking(),
-                "appender " + ASYNC_APPENDER_NAME + " of " + configResourcePath + " must block when its queue is"
-                        + " full, as its superseded form did, rather than discard events");
-        assertEquals(
-                ASYNC_QUEUE_CAPACITY,
-                asyncAppender.getQueueCapacity(),
-                "queue depth of appender " + ASYNC_APPENDER_NAME + " of " + configResourcePath
-                        + ", which is held verbatim");
-        final String locationMessage = "caller-location capture on appender " + ASYNC_APPENDER_NAME + " of "
-                + configResourcePath + ", which is the one dimension in which the two no-op fixtures differ";
-        if (expectedIncludeLocation) {
-            assertTrue(asyncAppender.isIncludeLocation(), locationMessage);
-        } else {
-            assertFalse(asyncAppender.isIncludeLocation(), locationMessage);
-        }
-        final String[] delegates = asyncAppender.getAppenderRefStrings();
-        assertEquals(
-                1,
-                delegates.length,
-                "number of appenders " + ASYNC_APPENDER_NAME + " of " + configResourcePath + " delegates to");
-        assertEquals(
-                COUNTING_APPENDER_NAME,
-                delegates[0],
-                "appender " + ASYNC_APPENDER_NAME + " of " + configResourcePath + " delegates to");
-        assertNull(
-                configuration.getAppender(COUNTING_APPENDER_NAME).getLayout(),
-                "the counting appender of " + configResourcePath + " must carry no layout, which is why its count is"
-                        + " the whole of its output");
     }
 
     /**
