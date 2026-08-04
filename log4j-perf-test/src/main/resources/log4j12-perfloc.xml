@@ -15,17 +15,22 @@
   ~ See the License for the specific language governing permissions and
   ~ limitations under the License.
   -->
-<!DOCTYPE log4j:configuration SYSTEM "log4j.dtd">
-<log4j:configuration xmlns:log4j="http://jakarta.apache.org/log4j/" debug="false">
-    <appender name="TestLogfile" class="org.apache.log4j.FileAppender">
-        <param name="File" value="target/testlog4j.log"/>
-        <param name="immediateFlush" value="false"/>
-        <layout class="org.apache.log4j.PatternLayout">
-            <param name="ConversionPattern" value="%d %5p [%t] %C{1}.%M:%L %X{transactionId} - %m%n"/>
-        </layout>
-    </appender>
-    <root>
-        <level value="debug"/>
-        <appender-ref ref="TestLogfile"/>
-    </root>
-</log4j:configuration>
+<Configuration shutdownHook="disable">
+  <!-- shutdownHook="disable" preserves the superseded generation's disposition, which installed no JVM shutdown hook
+       and relied on an explicit shutdown call, and it keeps a context started from this file free of global side
+       effects: registering the hook makes LoggerContext.start() reach LogManager.getFactory(), which builds the
+       process-global context factory and, permanently, its context selector. Do not drop it, and see
+       effective-config.adoc in the parity corpus of this module's test resources. -->
+  <Appenders>
+    <File name="TestLogfile" fileName="target/testlog4j.log" immediateFlush="false">
+      <PatternLayout>
+        <Pattern>%d %5p [%t] %C{1}.%M:%L %X{transactionId} - %m%n</Pattern>
+      </PatternLayout>
+    </File>
+  </Appenders>
+  <Loggers>
+    <Root level="debug">
+      <AppenderRef ref="TestLogfile"/>
+    </Root>
+  </Loggers>
+</Configuration>

@@ -16,8 +16,11 @@
  */
 package org.apache.logging.log4j.perf.jmh;
 
+import java.net.URL;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
+import org.apache.logging.log4j.core.LoggerContext;
+import org.apache.logging.log4j.core.config.Configurator;
 import org.openjdk.jmh.annotations.Benchmark;
 import org.openjdk.jmh.annotations.Scope;
 import org.openjdk.jmh.annotations.Setup;
@@ -26,34 +29,70 @@ import org.openjdk.jmh.annotations.TearDown;
 import org.slf4j.LoggerFactory;
 
 /**
- * Benchmarks Log4j 2, Log4j 1, and Logback using the DEBUG level which is disabled for this test. One of the primary
- * performance concerns of logging frameworks is adding minimal overhead when logging is disabled. Some users disable
- * all logging in production, while others disable finer logging levels in production. This benchmark demonstrates the
- * overhead in calling {@code logger.isDebugEnabled()} and {@code logger.debug()}.
+ * Benchmarks Log4j 2 in two separately configured logger contexts, and Logback, using the DEBUG level which is
+ * disabled for this test. One of the primary performance concerns of logging frameworks is adding minimal overhead
+ * when logging is disabled. Some users disable all logging in production, while others disable finer logging levels
+ * in production. This benchmark demonstrates the overhead in calling {@code logger.isDebugEnabled()} and
+ * {@code logger.debug()}.
  */
 @State(Scope.Thread)
 public class DebugDisabledBenchmark {
     Logger log4jLogger;
     org.slf4j.Logger slf4jLogger;
-    org.apache.log4j.Logger log4jClassicLogger;
+    org.apache.logging.log4j.Logger log4jClassicLogger;
+    private LoggerContext log4j1Context;
     Integer j;
 
     @Setup
-    public void setUp() {
+    public void setUp() throws Exception {
         System.setProperty("log4j.configurationFile", "log4j2-perf2.xml");
-        System.setProperty("log4j.configuration", "log4j12-perf2.xml");
         System.setProperty("logback.configurationFile", "logback-perf2.xml");
 
         log4jLogger = LogManager.getLogger(DebugDisabledBenchmark.class);
         slf4jLogger = LoggerFactory.getLogger(DebugDisabledBenchmark.class);
-        log4jClassicLogger = org.apache.log4j.Logger.getLogger(DebugDisabledBenchmark.class);
+        // This arm gets a logger context of its own instead of a global selector property. `log4j.configurationFile`
+        // above belongs to the other Log4j 2 arm, and ConfigurationFactory returns on the first key it resolves, so
+        // a second global key would silently mis-configure one of the two arms. A non-null configuration URI makes
+        // the LoggerContext constructor skip property lookup altogether, which is what keeps the two arms
+        // independent inside a single JVM.
+        final URL log4j1ConfigLocation = DebugDisabledBenchmark.class.getResource("/log4j12-perf2.xml");
+        // A fixture that was renamed or left out of the artifact is reported by name here, rather than as a bare
+        // NullPointerException from the URI conversion below.
+        if (log4j1ConfigLocation == null) {
+            throw new IllegalStateException("missing configuration resource: /log4j12-perf2.xml");
+        }
+        // That fixture declares shutdownHook="disable", and the attribute is load-bearing rather than cosmetic.
+        // Registering the hook makes LoggerContext.start() reach LogManager.getFactory(), which builds the
+        // process-global context factory and, permanently, the context selector it reads from Log4jContextSelector
+        // at that instant -- so a peer arm assigning that property afterwards would silently be handed the default
+        // selector instead of the one it asked for. Suppressing the hook is also what the superseded generation did:
+        // it installed none, relying on an explicit shutdown call, exactly as the teardown below does. Any fixture
+        // booted through a context of its own must therefore keep the attribute; the parity gates assert it.
+        // The context is started into a local and published to the field only once this arm is fully
+        // initialised, because JMH does not invoke the teardown of a state whose setup threw: a context
+        // assigned before a later failure would stay started for the remainder of the JVM's life, holding its
+        // configuration and its file manager, with nothing left able to reach it.
+        final LoggerContext starting = new LoggerContext("DebugDisabledBenchmark", null, log4j1ConfigLocation.toURI());
+        boolean armReady = false;
+        try {
+            starting.start();
+            // The exact class name is required here: it is the name the other two arms acquire above, so all
+            // three arms share one logger name and stay comparable.
+            log4jClassicLogger = starting.getLogger(DebugDisabledBenchmark.class.getName());
+            armReady = true;
+        } finally {
+            if (!armReady) {
+                Configurator.shutdown(starting);
+            }
+        }
+        log4j1Context = starting;
         j = Integer.valueOf(2);
     }
 
     @TearDown
     public void tearDown() {
         System.clearProperty("log4j.configurationFile");
-        System.clearProperty("log4j.configuration");
+        Configurator.shutdown(log4j1Context);
         System.clearProperty("logback.configurationFile");
     }
 

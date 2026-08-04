@@ -22,6 +22,8 @@ import java.io.FileReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.nio.CharBuffer;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -49,8 +51,27 @@ public class PerfTestDriver {
      * Defines the setup for a java process running a performance test.
      */
     static class Setup implements Comparable<Setup> {
+
+        /**
+         * The hierarchy the superseded generation installed whenever the configuration it was pointed at could not be
+         * found: a root logger at {@code DEBUG} owning no appender, and no JVM shutdown hook. Measured against the
+         * genuine {@code log4j:log4j:1.2.17} artefact, that hierarchy left a timed call enabled, built its event and
+         * discarded it. Written to a file rather than built in code because the arm it serves runs in a child JVM,
+         * which can only be handed a configuration by location.
+         */
+        private static final String SUPERSEDED_DEFAULT_HIERARCHY = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+                + "<Configuration name=\"Log4j1DefaultHierarchy\" shutdownHook=\"disable\">\n"
+                + "  <Loggers>\n"
+                + "    <Root level=\"debug\"/>\n"
+                + "  </Loggers>\n"
+                + "</Configuration>\n";
+
+        /** Written at most once per driver JVM and shared by every row that needs it. */
+        private static File supersededDefaultHierarchyFile;
+
         private final Class<?> klass;
         private final String log4jConfig;
+        private final String log4j2ConfigLocation;
         private final String name;
         private final String[] systemProperties;
         private final int threadCount;
@@ -76,6 +97,41 @@ public class PerfTestDriver {
             this.systemProperties = systemProperties;
             this.wait = wait;
             this.temp = File.createTempFile("log4jperformance", ".txt");
+            this.log4j2ConfigLocation = resolveLog4j2ConfigLocation(runner, log4jConfig);
+        }
+
+        /**
+         * Answers what the child JVM is pointed at for its Log4j 2 configuration.
+         *
+         * <p>Every row names its configuration by resource, and the child inherits this JVM's class path verbatim, so
+         * a name that does not resolve here does not resolve there either. That is the standing condition for the
+         * migrated arm: its rows name configurations owned by another module whose test resources are not published,
+         * and they did not resolve for the superseded arm either. The superseded generation answered an unresolvable
+         * configuration with a root logger at {@code DEBUG} owning no appender, leaving a timed call enabled; Log4j 2
+         * answers with a root logger at {@code ERROR} owning a console appender, which would suppress that call at the
+         * level check and silently change what this harness measures. Handing that arm an equivalent hierarchy keeps
+         * the measurement what it was.</p>
+         *
+         * <p>Nothing is substituted for the other two arms, whose disposition is unchanged by the migration, and
+         * nothing is substituted for a row whose own configuration does resolve -- that one is used, exactly as the
+         * superseded generation would have used it.</p>
+         */
+        private static String resolveLog4j2ConfigLocation(final Runner runner, final String log4jConfig)
+                throws IOException {
+            if (runner != Runner.Log4j12 || PerfTestDriver.class.getResource("/" + log4jConfig) != null) {
+                return log4jConfig;
+            }
+            return supersededDefaultHierarchyFile().getAbsolutePath();
+        }
+
+        private static synchronized File supersededDefaultHierarchyFile() throws IOException {
+            if (supersededDefaultHierarchyFile == null) {
+                final File file = File.createTempFile("log4j1DefaultHierarchy", ".xml");
+                file.deleteOnExit();
+                Files.write(file.toPath(), SUPERSEDED_DEFAULT_HIERARCHY.getBytes(StandardCharsets.UTF_8));
+                supersededDefaultHierarchyFile = file;
+            }
+            return supersededDefaultHierarchyFile;
         }
 
         List<String> processArguments(final String java) {
@@ -94,8 +150,7 @@ public class PerfTestDriver {
             // args.add("-XX:+PrintGCApplicationConcurrentTime");
             // args.add("-XX:+PrintSafepointStatistics");
 
-            args.add("-Dlog4j.configuration=" + log4jConfig); // log4j 1.2
-            args.add("-Dlog4j.configurationFile=" + log4jConfig); // log4j 2
+            args.add("-Dlog4j.configurationFile=" + log4j2ConfigLocation); // log4j 2
             args.add("-Dlogback.configurationFile=" + log4jConfig); // logback
 
             final int ringBufferSize = getUserSpecifiedRingBufferSize();

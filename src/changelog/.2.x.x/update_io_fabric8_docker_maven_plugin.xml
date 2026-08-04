@@ -15,21 +15,9 @@
   ~ See the License for the specific language governing permissions and
   ~ limitations under the License.
   -->
-<Configuration shutdownHook="disable">
-  <!-- shutdownHook="disable" preserves the superseded generation's disposition, which installed no JVM shutdown hook
-       and relied on an explicit shutdown call, and it keeps a context started from this file free of global side
-       effects: registering the hook makes LoggerContext.start() reach LogManager.getFactory(), which builds the
-       process-global context factory and, permanently, its context selector. Do not drop it, and see
-       effective-config.adoc in the parity corpus of this module's test resources. -->
-  <Appenders>
-    <CountingNoOp name="NoOp"/>
-    <Async name="ASYNC" blocking="true" bufferSize="262144">
-      <AppenderRef ref="NoOp"/>
-    </Async>
-  </Appenders>
-  <Loggers>
-    <Root level="debug">
-      <AppenderRef ref="ASYNC"/>
-    </Root>
-  </Loggers>
-</Configuration>
+<entry xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+       xmlns="https://logging.apache.org/xml/ns"
+       xsi:schemaLocation="https://logging.apache.org/xml/ns https://logging.apache.org/xml/ns/log4j-changelog-0.xsd"
+       type="updated">
+  <description format="asciidoc">Update `io.fabric8:docker-maven-plugin` to version `0.48.1`, which is required for the container-backed integration tests to start against Docker Engine API `1.55` and later</description>
+</entry>

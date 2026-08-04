@@ -30,8 +30,8 @@ import static org.apache.logging.log4j.perf.util.BenchmarkMessageParams.two;
 
 import java.io.File;
 import java.util.concurrent.TimeUnit;
-import org.apache.log4j.LogManager;
-import org.apache.log4j.Logger;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.apache.logging.log4j.perf.util.BenchmarkMessageParams;
 import org.openjdk.jmh.annotations.Benchmark;
 import org.openjdk.jmh.annotations.BenchmarkMode;
@@ -44,7 +44,8 @@ import org.openjdk.jmh.annotations.State;
 import org.openjdk.jmh.annotations.TearDown;
 
 /**
- * Tests Log4j-1.2 Async Appender performance.
+ * Tests Async Appender performance against the {@code perf-log4j12-async-noOpAppender.xml} configuration, which wraps a
+ * counting no-op appender so that the measurement covers the asynchronous hand-off rather than any I/O.
  */
 @State(Scope.Benchmark)
 public class AsyncAppenderLog4j1Benchmark {
@@ -52,7 +53,7 @@ public class AsyncAppenderLog4j1Benchmark {
 
     @Setup(Level.Trial)
     public void up() {
-        System.setProperty("log4j.configuration", "perf-log4j12-async-noOpAppender.xml");
+        System.setProperty("log4j2.configurationFile", "perf-log4j12-async-noOpAppender.xml");
         logger = LogManager.getLogger(getClass());
     }
 

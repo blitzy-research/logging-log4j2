@@ -15,17 +15,21 @@
   ~ See the License for the specific language governing permissions and
   ~ limitations under the License.
   -->
-<!DOCTYPE log4j:configuration SYSTEM "log4j.dtd">
-<log4j:configuration xmlns:log4j="http://jakarta.apache.org/log4j/">
-    <appender name="NoOp" class="org.apache.logging.log4j.perf.util.NoOpLog4jAppender">
-     </appender>
-     <appender name="ASYNC" class="org.apache.log4j.AsyncAppender">
-         <param name="BufferSize" value="262144"/>
-         <param name="LocationInfo" value="true"/>
-         <appender-ref ref="NoOp"/>
-     </appender>
-  <root>
-    <priority value="debug" />
-    <appender-ref ref="ASYNC" />
-  </root>
-</log4j:configuration>
+<Configuration shutdownHook="disable">
+  <!-- shutdownHook="disable" preserves the superseded generation's disposition, which installed no JVM shutdown hook
+       and relied on an explicit shutdown call, and it keeps a context started from this file free of global side
+       effects: registering the hook makes LoggerContext.start() reach LogManager.getFactory(), which builds the
+       process-global context factory and, permanently, its context selector. Do not drop it, and see
+       effective-config.adoc in the parity corpus of this module's test resources. -->
+  <Appenders>
+    <CountingNoOp name="NoOp"/>
+    <Async name="ASYNC" blocking="true" bufferSize="262144" includeLocation="true">
+      <AppenderRef ref="NoOp"/>
+    </Async>
+  </Appenders>
+  <Loggers>
+    <Root level="debug">
+      <AppenderRef ref="ASYNC"/>
+    </Root>
+  </Loggers>
+</Configuration>

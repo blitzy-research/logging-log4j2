@@ -1,0 +1,1508 @@
+////
+    Licensed to the Apache Software Foundation (ASF) under one or more
+    contributor license agreements.  See the NOTICE file distributed with
+    this work for additional information regarding copyright ownership.
+    The ASF licenses this file to You under the Apache License, Version 2.0
+    (the "License"); you may not use this file except in compliance with
+    the License.  You may obtain a copy of the License at
+
+         http://www.apache.org/licenses/LICENSE-2.0
+
+    Unless required by applicable law or agreed to in writing, software
+    distributed under the License is distributed on an "AS IS" BASIS,
+    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+    See the License for the specific language governing permissions and
+    limitations under the License.
+////
+
+= Log4j 1.x to Log4j 2 configuration parity corpus: effective configuration (T8-T10)
+
+This directory is the behaviour-preservation oracle for the three Log4j 1.x configuration fixtures
+that were translated in place into the Log4j 2 schema inside `log4j-core-test/src/test/resources`.
+
+It exists to turn "behaviour preserved" from a claim into something a reviewer can check. Each
+translated fixture contributes two artefacts:
+
+* a *normalized baseline capture* -- `<fixture>.baseline.txt` -- recording exactly what the Log4j 1.x
+  configuration rendered before the migration, and
+* an *effective-configuration table* in this document, whose Log4j 2 column is populated from what
+  was observed while booting the translated file with `-Dlog4j2.debug`, never from reading the
+  translated XML.
+
+*Acceptance for every fixture is an empty normalized diff* between its baseline capture and the
+output the migrated configuration renders for the same event. A non-empty diff is a defect in the
+migration. It is never resolved by widening the normalizer, and never by editing a baseline.
+
+== Scope: three fixtures, all owned by this module
+
+[cols="1,3,2,3",options="header"]
+|===
+| ID | Translated configuration | Disposition | Baseline capture
+
+| T8
+| `log4j-core-test/src/test/resources/log4j12-perf.xml`
+| synchronous
+| `log4j12-perf.baseline.txt`
+
+| T9
+| `log4j-core-test/src/test/resources/perf-log4j12.xml`
+| synchronous
+| `perf-log4j12.baseline.txt`
+
+| T10
+| `log4j-core-test/src/test/resources/perf-log4j12-async.xml`
+| *asynchronous*
+| `perf-log4j12-async.baseline.txt`
+|===
+
+Seven further fixtures were translated in the same change, but they live in `log4j-perf-test` and are
+documented by that module's own parity corpus. They are deliberately not covered, cross-referenced or
+summarised here: each corpus documents the fixtures its own module owns, so that each document can be
+verified against resources sitting beside it.
+
+== How both columns were observed
+
+The method is prescribed, not merely the goal:
+
+[quote]
+____
+each translated configuration file is to be booted with `-Dlog4j2.debug`, and its effective logger
+levels, additivity, and appender wiring compared against a documented table derived from the 1.x
+original.
+____
+
+Accordingly, *the Log4j 2 column is populated from observed boot output and from interrogating the
+objects the running configuration actually built.* Reading the translated XML and transcribing its
+attributes is exactly what this directive forbids, and it is not what was done. `log4j2.debug` is a
+real, supported property, declared in
+`log4j-api/src/main/java/org/apache/logging/log4j/status/StatusLogger.java`; when it is set, status
+level filtering is bypassed so that every status event reaches listeners. The constant holding its
+name is `private`, so it is set as a JVM system property (`-Dlog4j2.debug`) and never referenced
+programmatically.
+
+Three independent observation arms were run, each booting a fixture, replaying the event script,
+stopping the logger context and reading back the rendered file:
+
+[cols="1,3,3",options="header"]
+|===
+| Arm | What it ran | What it establishes
+
+| *Genuine Log4j 1.x*
+| The unmodified 1.x fixture under the real `log4j:log4j:1.2.17` artefact, with no bridge and no
+  Log4j 2 on the classpath, selected with `-Dlog4j.configuration`
+| The authoritative *Observed, Log4j 1.x* column. This is what "the 1.x original" means: the library
+  the fixtures were written against
+
+| *Bridge*
+| The same unmodified 1.x fixture through the `log4j-1.2-api` compatibility bridge, selected with
+  `-Dlog4j.configuration` plus the experimental compatibility flag. *This arm is an arrangement the
+  transient harness constructed on purpose; it is NOT a path any of these three fixtures took in the
+  repository.* At the base commit none of T8, T9 or T10 was on the runtime classpath of any module that
+  declared the bridge -- as the consumer discussion under each fixture below records -- so nothing here
+  ran through the bridge unless the harness deliberately routed it there
+| *Corroboration only, never authority.* Its sole purpose is to expose two places where the bridge is an
+  *approximation* of Log4j 1.x rather than a reproduction of it. Where the two 1.x arms disagree, the
+  genuine artefact decides and the bridge is recorded as the deviation
+
+| *Log4j 2*
+| The translated fixture in an isolated `LoggerContext`, with only `log4j-api` and `log4j-core` on
+  the classpath
+| The *Observed, Log4j 2* column, and the rendered output that is diffed against the baseline
+|===
+
+*A row is accepted only when the Log4j 1.x-observed and Log4j 2-observed values agree.* *Every row in
+all three tables agrees, with exactly one named exception*: root additivity, where Log4j 1.x reports
+`true` and the translated fixtures report `false`. No other row is accepted on the strength of a
+difference being argued inert, and no further exception may be added to this one.
+
+That exception is discharged in Record 4, by proof that the flag cannot be consulted at all for a logger
+with no parent -- carried in Core's own source and in measurement, not in reasoning alone. The row is not
+closed by declaring `additivity="true"` on the translated roots: that attribute has no counterpart in the
+Log4j 1.x sources being translated, and the target design for these fixtures carries the level on the root
+element and nothing else. Additivity is *asserted from observation* in all three tables -- never assumed
+from a documented default, which for the root logger is not the value one would expect.
+
+The harness that drove the two Log4j 1.x arms is transient and *is not committed*. It necessarily used
+the `org.apache.log4j` facade, and the rule that would have forbidden committing it is a *scoped* one:
+the migrated consumers carry no import of that package and no declaration typed against it. That is the
+claim the source oracle checks -- over `git ls-files '*.java'` with the `log4j-1.2-api` module excluded,
+because the bridge implements the namespace and must therefore name it -- and every migrated call site
+satisfies it. Only the normalized captures are committed; the harness is not among them.
+
+Stated repository-wide the claim would be false, so it is stated with its exceptions instead. Two
+references survive *by decision*, both of them in `log4j-osgi-test`, and both verifying that this
+project's *own shipped* bridge bundle resolves and logs rather than routing anything around this
+migration:
+
+* `CoreOsgiTest.java` L81 is a genuine fully-qualified typed call site, compiled against the single
+  test-scope bridge dependency that the enforcer allowance carves out.
+* `AbstractLoadBundleTest.java` L147 loads `org.apache.log4j.Level` reflectively, from a string literal,
+  through the bundle class loader.
+
+Both stand unchanged by decision. The migration's own summary of the oracle names only the reflective
+literal as its known exception; the typed call site is the second, and it is retained on the same ground --
+deleting either would destroy the only coverage of a published artefact.
+
+Four further files name the namespace -- in six places -- without resolving it as a logging facade, and
+not one of them is a migrated consumer's call site: Log4j 2 Core's own `OptionConverter` helper carries
+the name in a comment and in a warning message; `log4j-api`'s internal `package-info.java` lists the
+bridge's package as an OSGi and JPMS export target; the message-resolver test that this migration
+converted to the native facade keeps the superseded call's name in a comment and inside the message text
+it asserts on; and the website's migration example imports the facade on purpose, being a documentation
+snippet that Spotless format-checks and no compiler ever compiles.
+
+Inside this directory this document is the only file that names the Log4j 1.x namespace at all -- the
+three baselines are rendered output and name nothing. It does so in four ways, every one of them inert:
+*twelve* class names inside the tables below, of which five quote a superseded fixture's `class=`
+attribute verbatim and seven report the classes Log4j 1.x was *observed* to instantiate; *one* class name
+in prose, the level class the OSGi test loads reflectively; *three* citations of evidence paths, in slash
+form; and the bare package name *once*, where the harness is described above. Seventeen mentions, not one
+of which is an import, a declaration, or anything a class loader is asked to resolve.
+
+== Normalization
+
+Exactly four tokens are normalized, and nothing else:
+
+[cols="2,1,4",options="header"]
+|===
+| Rendered element | Normalized to | Why
+
+| `%d` timestamp
+| `<TS>`
+| Wall-clock, non-deterministic.
+
+| `%t` thread name
+| `<THREAD>`
+| The *producing* thread: the one that emitted the event, recorded when the event was *constructed*.
+  It is *never* the asynchronous dispatcher that later writes the event out -- which matters here,
+  because T10 wraps its appender in the asynchronous one, and both generations capture the producer's
+  name before the event is enqueued. Only the *value* is non-deterministic, being harness-assigned and
+  run-dependent; the fact that it identifies the producer is preserved, and the sibling corpus records
+  the observation that establishes it.
+
+| `%L` source line number
+| `<LINE>`
+| A source-layout artefact of the migration itself, which shifts whenever lines above an emission are
+  edited. *Inert in this corpus:* none of T8, T9 or T10 uses `%C`, `%M` or `%L`, so the rule never
+  fires here. It is retained so that this module's normalizer stays byte-identical to the sibling
+  module's. *Class and method names are never normalized* -- only the line number would have been.
+
+| Absolute filesystem paths
+| `<PATH>`
+| Workspace-dependent.
+|===
+
+Everything outside those four tokens is compared byte for byte: level text *and its padding width*,
+logger-name abbreviation, every literal separator, context-map placeholder rendering, and throwable
+rendering.
+
+*Normalization is line-aware, not a sequence of global replacements,* and that distinction is
+load-bearing rather than stylistic. A timestamp is recognised only where a rendered event actually
+begins one, at the start of a line; the thread and source-line substitutions are applied at most once
+per line, and only on a line that carries a timestamp. The reason is that two of the four regions are
+not unambiguous in isolation -- a thread name renders inside square brackets, and a message may itself
+contain a bracketed group, so replacing that pattern globally would rewrite message text, and a
+timestamp-shaped substring inside a message would be rewritten as though it were an event's own.
+Absolute paths carry no such ambiguity and are replaced throughout, which is what lets a stack-trace
+continuation line be normalized without being mistaken for an event. Line structure is preserved
+exactly, so whether a capture ends with a line separator survives untouched, and every substitution is
+idempotent, which is what makes it safe to normalize a committed baseline as well as a capture. This is
+the same algorithm the sibling module's corpus applies, expressed against the API surface this module
+compiles to, with the same four patterns and the same four replacement tokens character for character.
+
+Two whitespace consequences are load-bearing and are called out here because they look like
+formatting noise and are not:
+
+* T8's baseline contains a *double space immediately before the `-` separator*.
+* T9's and T10's baselines contain a *double space* after `]` and a *significant trailing space*
+  before the line separator.
+
+Both fall out of correct, byte-identical behaviour, and both are explained in Record 3. Trimming,
+right-stripping or collapsing whitespace in a baseline is a defect. `grep -nP '[ \t]$'` is *expected*
+to match the T9 and T10 baselines.
+
+That expectation collides with Git's own `git diff --check`, and the collision is resolved in favour of
+the payload rather than suppressed. Nothing in the repository exempts the byte, so that check *fails,
+exiting 2*, naming line 1 of the two captures this module owns that carry it:
+
+----
+log4j-core-test/src/test/resources/log4j1-parity/perf-log4j12-async.baseline.txt:1: trailing whitespace.
+log4j-core-test/src/test/resources/log4j1-parity/perf-log4j12.baseline.txt:1: trailing whitespace.
+----
+
+T8's baseline is *not* among them, and neither is this document. The report is expected, bounded and
+inconsequential to the build: Spotless covers `+src/**/*.xml+` and `+src/**/*.properties+` under its
+`formats` section and `+src/main/java+` and `+src/test/java+` under its `java` section, so it reaches
+neither `+*.txt+` nor `+*.adoc+`; Apache RAT excludes `+**/*.txt+` and `+src/test/resources/**/*+`; and
+no workflow file and no repository hook invokes `git diff --check` or any other whitespace check. *No
+capture byte was altered to quieten it*, and the two remedies that would have quietened it -- exempting
+the captures in the root `.gitattributes`, which is not among the files this change may modify, and
+re-encoding the captures into a whitespace-safe representation, which would substitute a transformation
+of the rendered output for the output itself -- were both rejected. The sibling corpus records that
+reasoning in full.
+
+== Capture ordering and capture hygiene
+
+The baselines were captured *before the migration landed*, which is the only order in which they can
+arbitrate anything:
+
+[cols="1,3",options="header"]
+|===
+| Condition | Value
+
+| Base commit
+| `df1d9a5198c55339cc4eebe78030f4fbdf4d5070`, branch `2.x`
+
+| JDK
+| 17, per `.java-version`
+
+| Maven
+| 3.9.16, per `.mvn/wrapper/maven-wrapper.properties`
+
+| Classpath state
+| The Log4j 1.x classpath was still present; no dependency had been removed and no fixture had been
+  translated
+
+| Committed artefacts
+| The normalized captures only. The capture harness is not committed
+|===
+
+Three disciplines were mandatory during capture, and remain mandatory for anything that reproduces
+it:
+
+. *T9 and T10 share a destination.* Both write the bare relative path `perftest.log`. They are never
+  booted concurrently, and the destination is deleted immediately before each boot. Only T8 writes
+  `target/testlog4j.log`, and it is deleted before its own boot for the same reason.
+. *The context is stopped before the file is read.* T10 is asynchronous, and T9 and T10 both carry
+  `immediateFlush="false"`, so when the last emission returns events may still be queued and rendered
+  bytes may still be sitting in the encoder buffer. Stopping the context drains the queue into the
+  file appender and then flushes it, which makes the read a result rather than a race.
+. *Nothing is tuned to make output appear.* These fixtures serve a benchmark harness -- a measurement
+  instrument. Waiting on a timer instead of stopping the context, relaxing `immediateFlush`,
+  shrinking `bufferSize`, or replacing the asynchronous appender with a synchronous one would each
+  make output appear sooner while destroying the very disposition being preserved. None was done, and
+  none may be done.
+
+== The event script, and where it lives
+
+Each fixture is exercised by *exactly the emission its real consumer makes*, and by nothing else. The
+logger names, levels and messages are carried across character for character; logger names in
+particular are never "improved". No probe, control or otherwise invented event appears anywhere in this
+script, and none may be added: an event no consumer emits was never rendered by the superseded
+generation, so no capture of it exists and it can prove nothing about the translation.
+
+One case makes that rule load-bearing rather than decorative. T8's consumer acquires *three* loggers,
+one per logging generation, and gives all three the *identical* name, derived from the same class.
+That is deliberate rather than a copy-paste defect: the class exists to compare the generations
+against each other, and the arms stay comparable only while they log under a shared name. The name is
+therefore carried across exactly as it stands, and one name serving several generations is never
+treated as something to disambiguate.
+
+[cols="1,3,1,2,2",options="header"]
+|===
+| ID | Logger name | Level | Message | Origin
+
+| T8
+| `org.apache.logging.log4j.PerformanceComparison`
+| `DEBUG`
+| `SEE IF THIS IS LOGGED 2.`
+| consumer emission
+
+| T9
+| `org.apache.logging.log4j.core.async.perftest.RunLog4j1`
+| `INFO`
+| `Short msg`
+| consumer emission
+
+| T10
+| `org.apache.logging.log4j.core.async.perftest.RunLog4j1`
+| `INFO`
+| `Short msg`
+| consumer emission
+|===
+
+T8's level and message come from its consumer's own emission, which concatenates its argument rather
+than parameterising it. That concatenation is preserved: no argument anywhere in this migration was
+converted to `{}` parameterisation, so the recorded message is the concatenated result. T9's and
+T10's `INFO` level likewise comes from their consumer, whose three emissions are all at `INFO`, and
+the message is that consumer's own latency-message constant.
+
+The sibling `log4j-perf-test` corpus carries one entry naming that very same consumer class, for its own
+copy of the asynchronous fixture, and it records that entry at `INFO` too. *The two corpora agree, as two
+records of one real emission must.* Neither level was chosen to match a root level: every one of that
+consumer's three emissions is at `INFO`, so `INFO` is the only level either corpus may record for it, and
+both fixtures declare a `debug` root that admits it. The two committed captures are byte-identical in
+consequence -- 43 bytes each, `+<TS> INFO RunLog4j1 [<THREAD>]  Short msg +` including the significant
+trailing space -- and that cross-corpus identity is itself a check: a divergence between them would mean
+one of the two had substituted a level no capture evidences for one that a capture does, which is
+precisely the drift these gates exist to prevent.
+
+=== The `+%5p+` field width, and how it is verified without an invented event
+
+T8's layout renders the level through `+%5p+` -- a five-character minimum field. Its consumer's own
+emission is at `DEBUG`, which is *exactly five characters*, so it needs no padding and its bytes are
+identical to those the same event would produce through a bare `+%p+`. The rendered capture therefore
+cannot, on its own, distinguish the width from its absence: deleting the width from the translated
+pattern would leave `log4j12-perf.baseline.txt` unchanged.
+
+*The gap is closed by observation, not by invention.* The layout-pattern row of T8's
+effective-configuration table below is populated from the configuration the migrated fixture actually
+boots, read out of its `-Dlog4j2.debug` status output, and it is compared against the pattern the
+superseded fixture configured *character for character* -- `+%5p+` included. A translated pattern whose
+width had been deleted would fail that row immediately, while rendering identical bytes. The width is
+thus verified by the evidence route this document is for, rather than by the rendered-output route,
+which for this one token has nothing to say.
+
+The alternative -- replaying an extra event at a shorter level so that the padding becomes visible in
+the bytes -- was considered and *rejected*, for a reason that outweighs the convenience:
+
+* *No such event was ever captured.* The superseded generation rendered exactly what its consumer
+  emitted. A shorter-levelled line added to this corpus would be a line this project computed, not a
+  line it recorded, and a baseline that contains computed bytes is no longer an oracle: it can only
+  ever confirm the reasoning that produced it.
+* *It would misrepresent the consumer.* The comparison class emits one event on this logger, at
+  `DEBUG`. Recording a second, at another level, states something about the consumer that is not true.
+* *The corpus rule is explicit.* Every record in this script is a consumer emission; admitting one
+  exception would make the rule unenforceable, and the sibling corpus holds the same rule on the same
+  ground.
+
+T9 and T10 are owed no equivalent discussion: their pattern renders the level through a bare `+%p+`, so
+there is no width to verify at all.
+
+=== Where the script lives
+
+*The event script lives as Java constants inside*
+`log4j-core-test/src/test/java/org/apache/logging/log4j/core/config/Log4j1MigratedConfigParityTest.java`,
+never as a resource file in this directory. That class runs three independent cases, one per fixture, and
+the table above and the class's own constants state the same script, so either can be checked against the
+other. The captures are the oracle and the test is their consumer, never the reverse: a capture can only be
+taken while the Log4j 1.x class path is present, which is no longer the case, whereas the test compares
+against what was captured.
+
+The sibling `log4j-perf-test` corpus keeps an equivalent script as a resource, and this module cannot
+reuse it, for three independent reasons:
+
+. `log4j-perf-test` declares a test-scope dependency *on* `log4j-core-test`, so an edge in the reverse
+  direction would be a hard Maven dependency cycle.
+. `log4j-perf-test` sets `maven.deploy.skip` and `maven.install.skip` and builds no `test-jar`, so
+  there is no artefact to depend on.
+. The root `pom.xml` lists `log4j-core-test` *before* `log4j-perf-test`, so the edge would require
+  reversing reactor order.
+
+*This directory therefore contains exactly four files* -- the three baseline captures and this
+document -- and no fifth.
+
+== Contract for the consuming test
+
+This document is self-sufficient by design: the test that consumes the corpus is written against it. Every
+item below is a standing requirement on that test, stated as a contract so that a change to the test can be
+checked against it:
+
+* *Boot each fixture in an isolated `LoggerContext`,* using
+  `new LoggerContext(name, null, uri)`, `start()`, and `Configurator.shutdown(ctx)` to tear it down.
+  The in-repository precedent is
+  `log4j-core-test/src/test/java/org/apache/logging/log4j/core/appender/TlsSocketAppenderTest.java`.
+  A global selector property must not be used: it would leak into every other test in the module.
+* *Be order-independent and leak nothing.* Surefire runs this module with `forkCount=1C`,
+  `reuseForks=false` and `runOrder=random`, so the test may not depend on execution order, and every
+  context it starts must be shut down -- including on the failure path.
+* *Respect the shared destination.* T9 and T10 write the same file; the test must not run them
+  concurrently, and must delete the destination before each boot.
+* *Stop the context before reading the file,* for the drain-and-flush reason given above.
+* *Never trim, strip or collapse the text it compares.* The T9 and T10 baselines carry a significant
+  trailing space, and normalising it away would make the comparison pass while hiding a real
+  difference.
+* *Compare the whole of every capture,* never only a first line and never only a prefix. The whole file
+  is read as bytes and decoded in one step, so the presence or absence of the terminating line separator
+  is part of the comparison too.
+* *Keep rendered output as the oracle.* The committed capture is what arbitrates: the test asserts an
+  empty normalized diff against it, and no structural check may stand in for that comparison or soften
+  it. Nothing is read from the configuration *files*, because reading the translation and then asserting
+  what was read is circular.
+* *Judge parity on rendered output alone.* The dimensions rendered bytes cannot see -- a started XML
+  configuration rather than a fallback; the root logger's level and additivity; the file appender's
+  destination, its `immediateFlush`, its `isAppend()` and its resolved byte buffer; and T10's asynchronous
+  wrapper with its queue capacity, its blocking behaviour and its absence of caller-location capture -- are
+  evidenced by the observed effective-configuration tables below, each populated from a `-Dlog4j2.debug`
+  boot and cross-checked against the superseded fixture. They are deliberately *not* re-asserted inside the
+  test through `Configuration`, `Appender`, `FileManager`, `PatternLayout`, `XmlConfiguration` or
+  plugin-builder state: the committed capture is this corpus's oracle, and a structural check standing
+  beside it would be a second, weaker oracle able to pass while the capture diverged. Exactly one structural
+  reading is exempt, and the exemption is principled rather than convenient: the shutdown-hook invariant
+  described in the bullet below is *not* a parity dimension at all. It names no logger, level, appender,
+  destination, layout or queue, so no rendered byte could ever carry it, and asserting it therefore stands in
+  for nothing -- it cannot pass while a capture diverges, because it says nothing about what was rendered. The
+  one dimension a
+  `DEBUG`-only capture genuinely cannot show, T8's `+%5p+` field width, is settled the same way -- by the
+  observed conversion pattern in T8's table below, never by reading the translated file back.
+* *Pin each case to its own resource, and leave no lookup for a fallback to win.* The case resolves the
+  classpath resource it named, asserts that it is there, and hands the context that resource's own URI, so
+  the configuration in force can be neither a fallback nor a sibling fixture. All three fixtures here are
+  XML and T9 and T10 bind the same appender name to the same destination, so that identity matters -- and
+  it is established by construction rather than by inspecting the configuration the boot produced.
+* *Require the boot to be quiet at `WARN` or above, and establish it from the recorded boot.* An unresolved
+  appender reference, an unrecognised attribute and a silent fallback are all reported through the status
+  channel and *none* of them stops a context from starting or a case from producing a file. Every boot
+  recorded in this document was therefore taken under `-Dlog4j2.debug`, which routes the whole channel to
+  the console, and read for anything at `WARN` or above before its row was accepted. All three fixtures
+  boot, replay and stop with nothing at either level attributable to the configuration under test; the one
+  warning that does appear is a property of the reduced capture class path, identical for all three fixtures
+  and independent of the configuration under test, and it is disclosed with T8's boot output below. The
+  reading is taken at `WARN` and not at `ERROR` because `StatusLogger` dispatches to its fallback listener
+  only while no listener is registered, and that fallback's own default threshold is `ERROR`, so an
+  error-only reading would miss a warning about a mis-resolved reference or an unparsed option in both
+  channels at once. The test itself registers no status listener: a listener is process-global state, and
+  this module runs with `forkCount=1C`, `reuseForks=false` and `runOrder=random`, so each case asserts
+  only what it can own.
+* *Assert that each fixture suppressed the virtual-machine shutdown hook.* All three translated fixtures
+  declare `+shutdownHook="disable"+` on their root element, and the gate reads
+  `+isShutdownHookEnabled()+` back from each started context to prove it. The attribute carries two
+  independent obligations. It is *faithful*: the superseded generation installed no such hook, relying on an
+  explicit shutdown call, which is precisely what this gate and the arms that consume T9 and T10 perform, so
+  suppressing this generation's hook preserves the original disposition rather than adding one. And it is
+  *isolating*: `LoggerContext` L311-L313 sets the hook up only when the configuration allows it, that set-up
+  at L357-L360 calls `+LogManager.getFactory()+`, `LogManager` L62-L63 builds the process-global context
+  factory in a static field initialiser, and `Log4jContextFactory` L60-L62 builds its `ContextSelector`
+  eagerly at L99-L115 -- so a context started from a fixture without the attribute freezes the process-global
+  selector, and anything assigning `Log4jContextSelector` afterwards is silently handed the default one.
+  Asserting it here makes dropping the attribute from one of these three files fail the build. The attribute
+  is read at `XmlConfiguration` L116-L117, predates the 2.24.3 baseline, and has an in-repository precedent in
+  `log4j-core-test/src/test/resources/log4j-test3.xml`. What suppression does *not* reach is stated for the
+  record: `LoggerContext.stop` L448 calls `+LogManager.getFactory().removeContext(this)+` unconditionally, so
+  stopping a context builds that factory whatever the configuration says. For a privately constructed context
+  the removal itself is a no-op, the call is core production code of another module, and it is common to every
+  context these fixtures are booted in -- migrated or otherwise.
+* *Stay within this module's API surface.* `log4j-core-test` compiles at release 8, so the test may
+  not use `var`, `Files.readString`, `Files.writeString`, `String.strip`, text blocks, or
+  `List.of`/`Set.of`/`Map.of`. `String.strip` and `String.trim` are doubly excluded, for the
+  whitespace reason above.
+* *Be clean under SpotBugs.* SpotBugs is active in this module, but the goal as configured analyses main
+  classes only, so an ordinary build establishes nothing about a *test* class -- its report does not mention
+  this test at all. Cleanliness is established instead from an analysis that includes test classes, which
+  records
+  `+<FileStats path='org/apache/logging/log4j/core/config/Log4j1MigratedConfigParityTest.java' ...
+  bugCount='0'>+`. That analysis also reports pre-existing findings in other classes of this module, so the
+  claim made here is scoped to this file rather than to the module.
+
+*Hosting these tests costs this module no build-file change at all.* `log4j-core-test` already
+compiles and runs tests, already excludes `src/test/resources/**/*` from Apache RAT, holds neither
+prohibited Log4j 1.x coordinate, and is not one of the five modules carrying a
+`ban-logging-dependencies` enforcer execution -- so it needs no enforcer allowance either. No
+dependency, no `test-jar`, no `maven-jar-plugin` execution and no `<testResources>` block was added,
+and `log4j-core-test/pom.xml` is untouched by this corpus.
+
+== Two facts about the consumers of these fixtures
+
+Both of the following are properties of the surrounding code rather than of these three fixtures. Both are
+recorded because a reader will otherwise trip over them. The first one is *fixed* in the two consumers --
+in the Java sources that name these fixtures, not in any build file and not by publishing this module's
+test resources; the second is left as an observation, because altering a module's test selection is outside
+the change permitted to it.
+
+. *These three resources are not on the integration-test module's classpath, and the consumers reproduce
+  the superseded fallback when they cannot reach them.* `log4j-core-its` names all three by string literal,
+  but they exist only in
+  `log4j-core-test/src/test/resources`, which is never published: `log4j-core-test/pom.xml` contains no
+  `test-jar` execution and no `maven-jar-plugin` execution, and `log4j-core-its/src/test/resources`
+  contains only its Logback fixture. Adding a `test-jar` execution to "`fix`" this is forbidden, and
+  putting this module's test-resource directory on the consumers' class path was rejected on measurement:
+  that directory holds 310 entries at its top level and 535 files in all, among them a `logback-test.xml`
+  that would collide with the integration-test module's own and silently re-configure the out-of-scope
+  Logback arm, and a `META-INF/services/org.apache.logging.log4j.spi.TraceContextProvider` registration.
+  Class-path entries cannot be made file-selective.
++
+The lookup result is preserved by itself. The *effective level* is not, and that is the whole of the
+problem: a context handed no resolvable configuration falls back to Log4j 2's default, whose root logger is
+at `ERROR` and which owns a console appender, whereas the superseded generation under the identical
+condition kept a root level of `DEBUG` and owned no appender. Measured against the genuine
+`log4j:log4j:1.2.17` artefact: `+root.getLevel()=DEBUG+`, `+isDebugEnabled()=true+`,
+`+isInfoEnabled()=true+`, root appender count *zero* -- so a timed call was enabled, built its event and
+discarded it. Left alone, the migrated arms would have measured a suppressed level check instead, which the
+plan forbids: it changes what the harness measures.
++
+*Each consumer therefore reproduces that superseded fallback natively, and only in the condition that
+provokes it.* Both keep naming the fixture, both still use it when it resolves, and neither reaches for a
+build file, a `test-jar`, a copied resource, or this module's test-resource directory.
++
+`PerformanceComparison`, which consumes T8, holds an isolated logger context, because it drives three
+logging generations inside a single JVM and one global configuration property could only ever select one of
+them. When the fixture resolves, that context is pointed straight at it. When it does not, the context is
+started on a configuration built in place -- root logger at `DEBUG`, no appender, `shutdownHook` disabled --
+which is the superseded default hierarchy expressed in Log4j 2's own terms. The class then *asserts* the
+resulting state before it takes a single timing: root level `DEBUG`, the arm's timed call enabled, and, in
+the fallback, no appender owned. Measured on this module's classpath after the change:
+`+configurationName=PerformanceComparison-log4j1-arm+`, `+root.level=DEBUG+`, `+root.appenders=[]+`,
+`+shutdownHookEnabled=false+`, `+isDebugEnabled=true+`, and the timed message emitted repeatedly produces no
+output anywhere. The native arm beside it keeps its own disposition, unchanged by the migration and outside
+this change.
++
+`RunLog4j1`, which consumes T9 and T10, holds no context and gains none: it stays a pure import
+substitution, and its arm is served *driver-side*, which is where the plan places it. `PerfTestDriver`
+launches one child JVM per row and hands each one its configuration by location; the child inherits the
+driver's class path verbatim, so a row name that does not resolve in the driver does not resolve in the
+child either. For a migrated-arm row in exactly that condition -- and for no other row, and for neither of
+the other two arms -- the driver forwards an equivalent hierarchy instead of the unresolvable name.
+Measured in a real child JVM: `+configurationName=Log4j1DefaultHierarchy+`, `+root.level=DEBUG+`,
+`+root.appenders=[]+`, `+isInfoEnabled=true+`, no `perftest.log` written and nothing on the console. The
+throughput difference is the proof that the arm is enabled again rather than filtered: the same row reports
+`+1,105,094,485 operations/second+` when the unresolvable name is forwarded and `+8,883,918+` when the
+equivalent hierarchy is, two orders of magnitude apart, because only the second one builds events.
++
+Capture and replay execute inside `log4j-core-test`, which owns the resources, while the logger names,
+levels and messages derive from the intended consumers -- so the three baselines this document reports on
+are unaffected by either consumer's shape, and the logger names
+`+org.apache.logging.log4j.PerformanceComparison+` and
+`+org.apache.logging.log4j.core.async.perftest.RunLog4j1+` that they encode are carried across
+byte-for-byte.
++
+*What the harness measures is therefore unchanged, and that is asserted rather than argued.* The rendered
+output of T8, T9 and T10 was never at stake -- the numbers and bytes in this document stand either way --
+but *what those two arms measure* was, and it is now the same thing it was before the migration: a timed
+call that is enabled, builds an event, and discards it for want of an appender. The remedy stays inside the
+files that name the fixtures: no `test-jar` execution was added, no resource was copied into the
+consumers' module, this module's test-resource directory was not put on any consumer's class path, and
+`log4j-core-test/pom.xml` and `log4j-core-its/pom.xml` are both untouched by it. Restoring the fixtures to
+the integration-test module's classpath, which no requirement asks for, would remove the condition
+altogether -- and both consumers would then use them, exactly as the superseded generation would have. The
+sibling corpus records the same remedy in the same terms.
+. *T8's consumer is not selected by CI.* `log4j-core-its` configures Failsafe `<groups>` with
+JUnit-4-style category class names, which JUnit 5 reads as literal tag names and matches against nothing,
+while `PerformanceComparison` carries a JUnit 5 `@Tag`; that module's Surefire execution is skipped as well.
+That selection stands exactly as it is -- altering a module's test selection is outside the change permitted
+to it -- so the class's behaviour is established by invoking it directly, against the module's own test
+classes and test classpath, outside the build's own selection. *Absence of a failure report for it in a
+normal build is not evidence that it passed*, which is why the invocation has to be explicit. The class
+reports its results as timings rather than as pass or fail, and the single assertion it carries is the
+contract on the conditions those timings are taken under, described above; no build file was changed to make
+it run. The explicit invocation used here is the JUnit Platform Console Launcher against that module's test
+classpath, and it was run three times to establish order-independence -- one test found, one started, one
+successful, zero failed, on every run.
+
+== T8 -- `log4j12-perf.xml`
+
+Baseline capture: `log4j12-perf.baseline.txt`. Synchronous.
+
+=== Translation
+
+[cols="2,3",options="header"]
+|===
+| Log4j 1.x source | Log4j 2 target
+
+| `<!DOCTYPE log4j:configuration SYSTEM "log4j.dtd">`
+| removed -- the translated file carries no DOCTYPE, which is what orphans the shared DTD (Record 2)
+
+| `<log4j:configuration ... debug="false">`
+| `<Configuration>` -- `debug="false"` is the Log4j 1.x default, so it is dropped rather than rewritten
+  as a `status` attribute; the translation introduces no diagnostic behaviour the original lacked
+
+| `<appender name="TestLogfile" class="org.apache.log4j.FileAppender">`
+| `<File name="TestLogfile" ...>` -- the plugin element replaces the class attribute
+
+| `<param name="File" value="target/testlog4j.log"/>`
+| `fileName="target/testlog4j.log"` -- destination held verbatim
+
+| `<param name="immediateFlush" value="false"/>` (note the lower-case leading letter)
+| `immediateFlush="false"`
+
+| `<param name="Append" value="false" />`
+| `append="false"`
+
+| no `BufferedIO` parameter
+| no `bufferedIo` attribute -- deliberately omitted; arbitrated in Record 4
+
+| `<layout class="org.apache.log4j.PatternLayout">` with `ConversionPattern`
+| `<PatternLayout><Pattern>...</Pattern></PatternLayout>`, pattern text carried across verbatim
+
+| `<appender-ref ref="TestLogfile"/>`
+| `<AppenderRef ref="TestLogfile"/>` -- case change only
+
+| `<root><level value="debug"/></root>`
+| `<Root level="debug">` -- the level attribute replaces the nested element, and no other attribute is
+  added; the resulting additivity reading is the corpus's one named exception, see Record 4, Decision 4
+|===
+
+=== Observed boot output
+
+Booted with `-Dlog4j2.debug`. The lines below are the status output that populates the Log4j 2 column;
+attribute values reading `"null"` are *unset in the XML*, so the plugin builder default applies.
+
+[source,text]
+----
+Building Plugin[name=appender, class=org.apache.logging.log4j.core.appender.FileAppender].
+PatternLayout$Builder(pattern="%d %5p [%t] %c{1} %X{transactionId} - %m%n", ...)
+FileAppender$Builder(fileName="target/testlog4j.log", append="false", locking="null", ...,
+    bufferedIo="null", bufferSize="null", immediateFlush="false", ..., name="TestLogfile", ...)
+Starting FileManager target/testlog4j.log
+Building Plugin[name=AppenderRef, class=org.apache.logging.log4j.core.config.AppenderRef].
+createAppenderRef(ref="TestLogfile", level="null", Filter=null)
+Building Plugin[name=Root, class=org.apache.logging.log4j.core.config.LoggerConfig$RootLogger].
+LoggerConfig$RootLogger$Builder(additivity="null", level="DEBUG", levelAndRefs="null",
+    includeLocation="null", ={TestLogfile}, ...)
+----
+
+No configuration warning was emitted for any of the three fixtures. In particular neither of the file
+appender's two guard warnings fired; see Record 4.
+
+One warning unrelated to these fixtures does appear, and is disclosed here so that nobody reproducing
+the capture mistakes it for a finding: `Error loading TraceContextProvider service`. Its cause is worth
+stating precisely, because the obvious explanation is the wrong one. It is *not* caused by the capture
+classpath merely lacking an implementation of that optional service: with no provider registered at all,
+the service registry finds nothing, logs nothing, and silently falls back to its no-op provider. The
+warning is emitted from a `catch` arm, so something has to *fail* rather than be absent. What failed was
+a *dangling service registration* -- a `META-INF/services` entry for the provider interface was visible
+on the capture classpath while the implementation class it names was not, so the service loader raised a
+`ServiceConfigurationError` from inside the registry's class initializer, which the registry caught and
+reported. Two consequences follow, and both are worth recording. First, the no-op provider is selected
+either way, so the outcome is identical to the silent case. Second, on this module's *real* test
+classpath, where that implementation class is present, the same initializer instead logs an informational
+`Using TraceContextProvider: ...` line and no warning at all -- so this warning is a property of the
+reduced capture environment, not of the module. The warning is emitted identically for all three
+fixtures, is independent of the configuration under test, and affects neither the effective configuration
+nor the rendered output: no fixture's pattern names a trace-context token, and the registry never
+supplies a value in any of the three cases.
+
+=== Effective configuration
+
+[cols="2,3,3,1",options="header"]
+|===
+| Property | Observed, Log4j 1.x | Observed, Log4j 2 | Match
+
+| Logger
+| root is the only *configured* logger -- the fixture declares no other. The event is emitted on
+  `org.apache.logging.log4j.PerformanceComparison`, which declares nothing of its own and therefore
+  inherits root's level and appender; that name is what `+%c{1}+` abbreviates in the rendered line
+| root is the only configured logger -- the configuration reports an empty declared-logger set and
+  the root's name as the empty string. The event is emitted on the byte-identical name,
+  `org.apache.logging.log4j.PerformanceComparison`, again inheriting root's level and appender
+| yes
+
+| Level
+| `DEBUG`
+| `DEBUG` -- `level="DEBUG"` in the root builder trace, and the built root reports `DEBUG`
+| yes
+
+| Additivity
+| `true` -- read from the running root logger; the fixture declares no `additivity`
+| `false` -- read from the running root logger. The translation declares no `additivity` either, which the
+  root builder trace above echoes as `additivity="null"`, and the root-logger plugin builder holds this
+  attribute in a primitive field so an absent attribute resolves to `false`; see Record 4
+| *inert* -- the corpus's one named exception, proven unreadable for a parentless root
+
+| Appender(s)
+| `TestLogfile`, attached to the root, writing `target/testlog4j.log`
+| `TestLogfile`, referenced by the root and attached to it, writing `target/testlog4j.log`
+| yes
+
+| Appender class
+| `org.apache.log4j.FileAppender` with `org.apache.log4j.PatternLayout`
+| `org.apache.logging.log4j.core.appender.FileAppender` with `PatternLayout` -- the generation
+  counterpart, and the same class the bridge itself built underneath
+| yes
+
+| Layout pattern
+| `%d %5p [%t] %c{1} %X{transactionId} - %m%n`
+| `%d %5p [%t] %c{1} %X{transactionId} - %m%n` -- identical text, and identical rendering; audited
+  token by token in Record 3. *This row is the sole evidence that the `+%5p+` field width survived
+  translation*, because T8's only captured event is at `DEBUG`, which fills the five-character field
+  exactly and so renders identically through a bare `+%p+`. The 2.x column is read out of the
+  `-Dlog4j2.debug` boot output of the migrated fixture, character for character, rather than by
+  re-reading the file the translation wrote
+| yes -- both observed, compared character for character including the width
+
+| Buffering and flush disposition
+| `immediateFlush=false`, `append=false`, buffered I/O *off* with an 8192-byte writer buffer
+| `immediateFlush=false`, `append=false`, `bufferedIo` unset so the default applies, giving a live
+  8192-byte buffer
+| yes -- Record 4
+
+| Asynchronous?
+| no -- no asynchronous appender is present
+| no -- no asynchronous appender, asynchronous logger, ring buffer or dispatcher thread appears
+| yes
+
+| Location capture
+| not requested
+| not requested; the pattern contains no `%C`, `%M` or `%L`, so no caller frame is walked
+| yes
+|===
+
+=== Parity result
+
+The migrated fixture renders, after normalization:
+
+[source,text]
+----
+<TS> DEBUG [<THREAD>] PerformanceComparison  - SEE IF THIS IS LOGGED 2.
+----
+
+which is byte-identical to `log4j12-perf.baseline.txt`, all 72 bytes of it -- one line, terminated by a
+single line separator. *The normalized diff is empty.* Two details of those bytes are load-bearing
+rather than incidental:
+
+* The *double space* before the `-` is correct, and is explained in Record 3. It is what the
+  `%X{transactionId}` token leaves behind when no such key is populated, and collapsing it would be a
+  rendered-output defect.
+* `DEBUG` sits *flush* against its neighbouring spaces, with no leading pad, because it is exactly five
+  characters and so fills the `+%5p+` field completely. That is why this capture cannot distinguish the
+  width from its absence, and why the width is verified by the layout-pattern row of the table above
+  rather than by these bytes. The corpus does not invent a shorter-levelled event to make the padding
+  visible; the reasons are set out under the field-width heading earlier in this document.
+
+== T9 -- `perf-log4j12.xml`
+
+Baseline capture: `perf-log4j12.baseline.txt`. Synchronous. This is the fixture whose Log4j 1.x source
+declares buffered I/O but no flush setting, which makes its buffering row the most informative in the
+corpus.
+
+=== Translation
+
+[cols="2,3",options="header"]
+|===
+| Log4j 1.x source | Log4j 2 target
+
+| `<!DOCTYPE log4j:configuration SYSTEM "log4j.dtd">`
+| removed -- no DOCTYPE in the translated file
+
+| `<log4j:configuration ...>` with no `debug` attribute
+| `<Configuration>` -- the source declares no `debug`, and none is invented; no `status` attribute is
+  added
+
+| `<appender name="File" class="org.apache.log4j.FileAppender">`
+| `<File name="File" ...>` -- the appender is *named* `File` and the plugin element is also `<File>`;
+  both are correct and neither was renamed
+
+| `<param name="File" value="perftest.log" />`
+| `fileName="perftest.log"` -- the bare relative destination is held verbatim, with no directory
+  prefix added
+
+| `<param name="BufferedIO" value="true"/>`
+| `bufferedIo="true"` *plus an explicit* `immediateFlush="false"` that appears nowhere in the source
+  text -- see Record 4
+
+| `<param name="Append" value="false" />`
+| `append="false"`
+
+| `<layout class="org.apache.log4j.PatternLayout">` with `ConversionPattern`
+| `<PatternLayout><Pattern>...</Pattern></PatternLayout>`, carried across verbatim *including the
+  single space before* `%n`
+
+| `<appender-ref ref="File" />`
+| `<AppenderRef ref="File"/>`
+
+| `<root><priority value="debug" /></root>`
+| `<Root level="debug">` -- `priority` is the older Log4j 1.x spelling of `level`, and Log4j 2 has no
+  `priority` attribute; no other attribute is added, and the resulting additivity reading is the corpus's
+  one named exception, per Record 4, Decision 4
+|===
+
+=== Observed boot output
+
+[source,text]
+----
+Building Plugin[name=appender, class=org.apache.logging.log4j.core.appender.FileAppender].
+PatternLayout$Builder(pattern="%d %p %c{1} [%t] %X{aKey} %m %n", ...)
+FileAppender$Builder(fileName="perftest.log", append="false", locking="null", ...,
+    bufferedIo="true", bufferSize="null", immediateFlush="false", ..., name="File", ...)
+Starting FileManager perftest.log
+Building Plugin[name=AppenderRef, class=org.apache.logging.log4j.core.config.AppenderRef].
+createAppenderRef(ref="File", level="null", Filter=null)
+Building Plugin[name=Root, class=org.apache.logging.log4j.core.config.LoggerConfig$RootLogger].
+LoggerConfig$RootLogger$Builder(additivity="null", level="DEBUG", levelAndRefs="null",
+    includeLocation="null", ={File}, ...)
+----
+
+No configuration warning was emitted; only the unrelated service-registration warning noted under T8.
+
+=== Effective configuration
+
+[cols="2,3,3,1",options="header"]
+|===
+| Property | Observed, Log4j 1.x | Observed, Log4j 2 | Match
+
+| Logger
+| root is the only *configured* logger. The event is emitted on
+  `org.apache.logging.log4j.core.async.perftest.RunLog4j1`, which declares nothing of its own and
+  therefore inherits root's level and appender; that name is what `+%c{1}+` abbreviates in the
+  rendered line
+| root is the only configured logger; empty declared-logger set, root name is the empty string. The
+  event is emitted on the byte-identical name,
+  `org.apache.logging.log4j.core.async.perftest.RunLog4j1`, again inheriting root's level and
+  appender
+| yes
+
+| Level
+| `DEBUG` -- resolved from the older `priority` spelling
+| `DEBUG` -- `level="DEBUG"` in the root builder trace, and the built root reports `DEBUG`
+| yes
+
+| Additivity
+| `true` -- read from the running root logger; the fixture declares no `additivity`
+| `false` -- read from the running root logger. The translation declares no `additivity` either, echoed by
+  the trace above as `additivity="null"`, for the reason given under T8; see Record 4
+| *inert* -- the corpus's one named exception, proven unreadable for a parentless root
+
+| Appender(s)
+| `File`, attached to the root, writing `perftest.log`
+| `File`, referenced by the root and attached to it, writing `perftest.log` -- no directory prefix,
+  and the destination is shared with T10
+| yes
+
+| Appender class
+| `org.apache.log4j.FileAppender` with `org.apache.log4j.PatternLayout`
+| `org.apache.logging.log4j.core.appender.FileAppender` with `PatternLayout`
+| yes
+
+| Layout pattern
+| `%d %p %c{1} [%t] %X{aKey} %m %n`
+| `%d %p %c{1} [%t] %X{aKey} %m %n` -- identical text, including the space before `%n`
+| yes
+
+| Buffering and flush disposition
+| `bufferedIo=true`, `append=false`, and *`immediateFlush=false` although the source never states it*
+  -- Log4j 1.x forces the flush flag off whenever buffered I/O is on
+| `bufferedIo="true"`, `append="false"`, `immediateFlush="false"` stated explicitly; buffer size unset
+  so the 8192-byte default applies
+| yes -- and this is the row most likely to catch a defect
+
+| Asynchronous?
+| no
+| no -- no asynchronous appender or dispatcher thread appears
+| yes
+
+| Location capture
+| not requested
+| not requested; no `%C`, `%M` or `%L` in the pattern
+| yes
+|===
+
+=== Parity result
+
+The migrated fixture renders, after normalization:
+
+[source,text]
+----
+<TS> INFO RunLog4j1 [<THREAD>]  Short msg
+----
+
+byte-identical to `perf-log4j12.baseline.txt` -- *empty normalized diff*. The rendered line carries two
+pieces of significant whitespace, and they differ in how visible they are above. The double space after
+`]` *is* reproduced in the block: it is the empty single-key context-map placeholder rendering between
+the two literal spaces the pattern supplies around it. The *significant trailing space* before the line
+separator is *not* visible above, because no reproduction of a line can show a space at its end. Both
+are byte-compared and both are explained in Record 3.
+
+== T10 -- `perf-log4j12-async.xml`
+
+Baseline capture: `perf-log4j12-async.baseline.txt`. *Asynchronous* -- the only such fixture in this
+directory, and the only one whose Log4j 1.x source wrapped a file appender in an asynchronous
+appender.
+
+=== Translation
+
+Its `<appender name="File" ...>` block is byte-identical to T9's and is translated identically; only
+the additions are listed here.
+
+[cols="2,3",options="header"]
+|===
+| Log4j 1.x source | Log4j 2 target
+
+| the T9 `<appender name="File" ...>` block, byte-identical
+| the T9 `<File name="File" ...>` element, translated identically -- including `bufferedIo="true"` and
+  the explicit `immediateFlush="false"`
+
+| `<appender name="ASYNC" class="org.apache.log4j.AsyncAppender">`
+| `<Async name="ASYNC" ...>`
+
+| `<param name="BufferSize" value="262144"/>`
+| `bufferSize="262144"` -- a *non-default* queue depth. Log4j 2's asynchronous appender defaults its
+  queue to 1024, so omitting this attribute would have shrunk the queue by a factor of 256
+
+| `<appender-ref ref="File"/>` nested inside the asynchronous appender
+| `<AppenderRef ref="File"/>` nested inside `<Async>` -- the two-appender chain is not flattened
+
+| `<appender-ref ref="ASYNC" />` in the root
+| `<AppenderRef ref="ASYNC"/>` -- the root keeps pointing at the asynchronous appender, which keeps
+  pointing at the file appender
+
+| no `Blocking` parameter
+| `blocking="true"` stated explicitly, even though it is also the Log4j 2 builder default -- see
+  Record 4
+
+| no `LocationInfo` parameter
+| no `includeLocation` attribute, *in either polarity*. Stating `false` would assert something the
+  source never said, and stating `true` would add a caller-frame walk the original never paid for
+
+| implicit bounded queue
+| no queue element -- an array-backed blocking queue is already the default, so an explicit element
+  would be redundant over-specification
+
+| `<root><priority value="debug" /></root>`
+| `<Root level="debug">` -- as in T9, with no attribute added beyond the level
+  Log4j 1.x's root already had; see Record 4, Decision 4
+|===
+
+=== Observed boot output
+
+[source,text]
+----
+Building Plugin[name=appender, class=org.apache.logging.log4j.core.appender.FileAppender].
+PatternLayout$Builder(pattern="%d %p %c{1} [%t] %X{aKey} %m %n", ...)
+FileAppender$Builder(fileName="perftest.log", append="false", ..., bufferedIo="true",
+    bufferSize="null", immediateFlush="false", ..., name="File", ...)
+Starting FileManager perftest.log
+createAppenderRef(ref="File", level="null", Filter=null)
+Building Plugin[name=appender, class=org.apache.logging.log4j.core.appender.AsyncAppender].
+AsyncAppender$Builder(={File}, errorRef="null", blocking="true", shutdownTimeout="null",
+    bufferSize="262144", name="ASYNC", includeLocation="null", ..., BlockingQueueFactory=null, ...)
+createAppenderRef(ref="ASYNC", level="null", Filter=null)
+Building Plugin[name=Root, class=org.apache.logging.log4j.core.config.LoggerConfig$RootLogger].
+LoggerConfig$RootLogger$Builder(additivity="null", level="DEBUG", levelAndRefs="null",
+    includeLocation="null", ={ASYNC}, ...)
+----
+
+`BlockingQueueFactory=null` confirms that no queue factory was specified and the default was used. The
+dispatcher thread `Log4j2-AsyncAppenderEventDispatcher-1-ASYNC` was observed to start and to stop -- the
+name carries the framework's own `Log4j2-` thread-name prefix ahead of the dispatcher's counter and the
+appender name, and it is quoted here in the full form the boot prints. No configuration warning was
+emitted; only the unrelated service-registration warning noted under T8.
+
+=== Effective configuration
+
+[cols="2,3,3,1",options="header"]
+|===
+| Property | Observed, Log4j 1.x | Observed, Log4j 2 | Match
+
+| Logger
+| root is the only *configured* logger. The event is emitted on
+  `org.apache.logging.log4j.core.async.perftest.RunLog4j1`, which declares nothing of its own and
+  therefore inherits root's level and its `ASYNC` appender; that name is what `+%c{1}+` abbreviates
+  in the rendered line
+| root is the only configured logger; empty declared-logger set, root name is the empty string. The
+  event is emitted on the byte-identical name,
+  `org.apache.logging.log4j.core.async.perftest.RunLog4j1`, again inheriting root's level and its
+  `ASYNC` appender
+| yes
+
+| Level
+| `DEBUG` -- resolved from the older `priority` spelling
+| `DEBUG` -- `level="DEBUG"` in the root builder trace, and the built root reports `DEBUG`
+| yes
+
+| Additivity
+| `true` -- read from the running root logger; the fixture declares no `additivity`
+| `false` -- read from the running root logger. The translation declares no `additivity` either, echoed by
+  the trace above as `additivity="null"`, for the reason given under T8; see Record 4
+| *inert* -- the corpus's one named exception, proven unreadable for a parentless root
+
+| Appender(s)
+| root -> `ASYNC` -> `File`; the asynchronous appender's only reference is `File`, which writes
+  `perftest.log`
+| root -> `ASYNC` -> `File`; the root references `ASYNC`, whose reference list and nested appender are
+  both `File`, writing `perftest.log`
+| yes
+
+| Appender class
+| `org.apache.log4j.AsyncAppender` wrapping `org.apache.log4j.FileAppender` with
+  `org.apache.log4j.PatternLayout`
+| `org.apache.logging.log4j.core.appender.AsyncAppender` wrapping
+  `org.apache.logging.log4j.core.appender.FileAppender` with `PatternLayout`. The asynchronous
+  appender itself carries no layout, which is correct -- the wrapped file appender formats the event
+| yes
+
+| Layout pattern
+| `%d %p %c{1} [%t] %X{aKey} %m %n`
+| `%d %p %c{1} [%t] %X{aKey} %m %n` -- identical text, including the space before `%n`
+| yes
+
+| Buffering and flush disposition
+| on the file appender: `bufferedIo=true`, `append=false`, and `immediateFlush=false` although the
+  source never states it
+| on the file appender: `bufferedIo="true"`, `append="false"`, `immediateFlush="false"` stated
+  explicitly; buffer size unset so the 8192-byte default applies
+| yes
+
+| Asynchronous?
+| *yes* -- one asynchronous appender, queue depth `262144`, back-pressure on a full queue
+| *yes* -- one asynchronous appender, queue capacity `262144`, an array-backed blocking queue, and
+  `blocking=true`; the named dispatcher thread starts and stops
+| yes
+
+| Location capture
+| not requested -- the source declares no `LocationInfo`, and the running asynchronous appender
+  reports location capture off
+| not requested -- `includeLocation` unset, and the built asynchronous appender reports `false`. The
+  pattern contains no `%C`, `%M` or `%L`, so no caller frame is walked either way
+| yes
+|===
+
+=== Parity result
+
+The migrated fixture renders, after normalization:
+
+[source,text]
+----
+<TS> INFO RunLog4j1 [<THREAD>]  Short msg
+----
+
+byte-identical to `perf-log4j12-async.baseline.txt`, and identical to T9's capture -- as it must be,
+since the two fixtures differ only in whether the same file appender is reached synchronously or
+through a queue. *The normalized diff is empty.* The trailing space is present and significant.
+
+== Record 1 -- Rolling policies: proof of absence, and the standing nearest-equivalent rules
+
+=== Proof of absence
+
+T8, T9 and T10 use only a plain Log4j 1.x `FileAppender`, optionally wrapped in a Log4j 1.x
+`AsyncAppender`. Searching all three sources for every rolling construct returns nothing:
+
+[cols="3,1",options="header"]
+|===
+| Searched for | Occurrences across T8, T9, T10
+
+| `DailyRollingFileAppender`
+| 0
+
+| Log4j 1.x `RollingFileAppender`
+| 0
+
+| `MaxFileSize`
+| 0
+
+| `MaxBackupIndex`
+| 0
+
+| `DatePattern`
+| 0
+|===
+
+*Zero rolling-policy mappings are applied,* and no rolling appender, triggering policy or rollover
+strategy was introduced into any translated fixture.
+
+=== The standing nearest-equivalent rules
+
+Recorded so that a future Log4j 1.x configuration entering this repository is not translated from
+first principles, and so that the one genuinely inexact mapping is not rediscovered the hard way.
+
+* *Index shifting is the one genuine inexactness.* Log4j 1.x rolls the current file to index 1 and
+  shifts every existing file up; Log4j 2 rolls to the first *available* index. Reproducing the Log4j
+  1.x ordering requires `<DefaultRolloverStrategy fileIndex="min"/>`.
+* `DailyRollingFileAppender` maps to `<RollingFile>` with a `+%d{...}+` `filePattern` derived from the
+  Log4j 1.x `DatePattern`, plus a `<TimeBasedTriggeringPolicy>`.
+* A size-triggered Log4j 1.x appender maps to a `%i` `filePattern`, a `<SizeBasedTriggeringPolicy>`
+  carrying the `MaxFileSize` value, and a `+<DefaultRolloverStrategy max="..."/>+` carrying the
+  `MaxBackupIndex` value.
+* *Two Log4j 1.x behaviours have no exact Log4j 2 equivalent* and must be accepted as
+  nearest-equivalent rather than reproduced: Log4j 1.x's compress-on-rename-only semantics, and its
+  exact rename ordering under concurrent rollover.
+
+== Record 2 -- Why `log4j.dtd` was deleted
+
+`log4j-core-test/src/test/resources/log4j.dtd`, 5050 bytes, was deleted as *orphaned* once no file in
+this module carried a Log4j 1.x DOCTYPE any longer.
+
+=== Two copies existed; the deliverable's copy is retained
+
+[cols="3,2",options="header"]
+|===
+| Copy | Disposition
+
+| `log4j-1.2-api/src/main/resources/org/apache/log4j/xml/log4j.dtd`
+| *Retained, and out of scope.* This is the shipped compatibility bridge's own copy. That module is a
+  retained public deliverable of this same reactor; removing it would be a major API removal that the
+  project's own binary-compatibility gate rejects on the 2.x line
+
+| `log4j-core-test/src/test/resources/log4j.dtd`
+| *Deleted.* A pure test fixture, referenced only by the three configurations translated here
+|===
+
+Because the bridge keeps its own copy, *no deliverable is affected and no user-facing capability is
+lost.* A repository-wide search now finds exactly one `log4j.dtd`, the bridge's.
+
+=== The referrer set was closed before deletion
+
+* Within this module, a search for `log4j.dtd` at the base commit returned *exactly four files*: the
+  DTD itself and the three translation targets. There was no fifth referrer -- no Java source, no POM,
+  no other fixture.
+* This directory is *not published.* `log4j-core-test/pom.xml` contains no `test-jar` execution and no
+  `maven-jar-plugin` execution, so nothing outside the module could ever have consumed the fixture.
+* *Nothing automated parsed these fixtures.* At the base commit the only file in this module naming any of
+  the three is the hand-driven shell script `src/test/resources/perf/runResponseTm.sh`; no Java test and no
+  POM referenced them.
+* *A co-located DTD was never the resolution target.* A Log4j 1.x XML boot resolves the system identifier
+  through `Log4jEntityResolver`, which matches *any* system id ending in `log4j.dtd` and serves the
+  classpath resource `/org/apache/log4j/xml/log4j.dtd`; when that resource is absent it warns
+  `+Could not find [log4j.dtd] using [{}] class loader, parsed without DTD.+`, substitutes an empty entity
+  and parses on. An unresolvable system entity is therefore a status warning in Log4j 1.x and not a parse
+  failure, so a fixture still carrying a DOCTYPE is not broken by the absence of a sibling DTD file.
+* *The repository-wide census, in full.* At the base commit the string `log4j.dtd` occurred in
+  *forty-two* files: 31 under `log4j-1.2-api/`, 7 Log4j 1.x configurations under
+  `log4j-perf-test/src/main/resources`, and the 4 files of this module already listed. The bridge's 31
+  are 28 Log4j 1.x XML fixtures of that module's own test suite plus three of its sources --
+  `DOMConfigurator.java`, `Log4jEntityResolver.java` and `XmlConfiguration.java` -- and they are out of
+  scope by design: that module implements the Log4j 1.x namespace, ships the one surviving `log4j.dtd`,
+  and is the reason deleting this module's copy costs no capability. Only the perf-test seven and this
+  module's three configurations are in scope; all ten lose their DOCTYPE in this migration.
+  `log4j-perf-test` never contained a `log4j.dtd` of its own, and this module's only copy is the one
+  deleted here, so after the deletion no in-scope fixture is left resolving a sibling file.
+
+=== No replacement was authored
+
+The Log4j 2 configuration schema requires no DTD. No `log4j2.dtd` and no XSD was added, and no
+`log4j2.xml` was introduced anywhere in this module's resources -- a file by that name would be
+auto-discovered by every other test in this roughly 310-entry directory.
+
+== Record 3 -- Pattern token audit
+
+Letter equivalence is not acceptable evidence, so each token is accounted for against *rendered
+output*, and the audit is anchored in the compatibility bridge's own rewrite map rather than in a
+prose comparison.
+
+=== The bridge rewrites three tokens, then delegates to Log4j 2
+
+`log4j-1.2-api/src/main/java/org/apache/log4j/builders/layout/PatternLayoutBuilder.java` rewrites the
+Log4j 1.x conversion pattern and hands the result to Log4j 2's own `PatternLayout` builder:
+
+[source,java]
+----
+.replaceAll("%([-\\.\\d]*)p(?!\\w)", "%$1v1Level")     // level names differ for custom levels
+.replaceAll("%([-\\.\\d]*)x(?!\\w)", "%$1ndc")         // Log4j 1: "foo bar baz"  vs  Log4j 2: "[foo, bar, baz]"
+.replaceAll("%([-\\.\\d]*)X(?!\\w)", "%$1properties")  // Log4j 1: "{{foo,bar}{hoo,boo}}"  vs  Log4j 2: "{foo=bar,hoo=boo}"
+----
+
+This is directly observable rather than merely documented. Booting the *unmodified* Log4j 1.x fixtures
+through the bridge shows the rewritten effective patterns:
+
+[source,text]
+----
+T8   : %d %5v1Level [%t] %c{1} %properties{transactionId} - %m%n
+T9   : %d %v1Level %c{1} [%t] %properties{aKey} %m %n
+T10  : %d %v1Level %c{1} [%t] %properties{aKey} %m %n
+----
+
+Two consequences follow, and they are what make this audit exact:
+
+. *Because the bridge delegates to Log4j 2's own `PatternLayout`, every token that is neither `%p` nor
+  `%X` was already being rendered by the very converter the migrated fixture now uses.* `%d`, `%t`,
+  `%c{1}`, `%m` and `%n` are therefore byte-identical *by construction*, not by inspection.
+. *Padding and precision survive the rewrite* as a matter of mechanism, because the width is captured
+  and re-emitted: `%5p` becomes `%5v1Level`, as the observed T8 pattern shows, and the same pattern
+  parser and field-formatting machinery then formats both. *This mechanism is corroboration, not the
+  evidence.* Rewrite mechanics cannot establish rendered padding, and the committed captures cannot
+  either -- see the measurement below, which supplies the observed rendering the rule actually demands.
+
+=== The two tokens whose converter identity changes
+
+[cols="1,4",options="header"]
+|===
+| Token | Why the two converters agree here
+
+| `%p` / `%5p`
+| The bridge converter is keyed `v1Level` and appends a level that has been round-tripped *by name*;
+  the native converter is keyed `p` and `level` and appends the event's level directly. Both end up
+  rendering the level's own string form, so they agree for every standard level. The only case in
+  which they could diverge is a custom level. *T8, T9 and T10 declare no custom level, and the
+  replayed events use only the standard levels `DEBUG` and `INFO`* -- which is the precise
+  scope of this claim. It is deliberately not stated more broadly: this very directory contains
+  unrelated custom-level fixtures, namely `log4j-customLevel.xml`, `log4j-customLevels.xml`,
+  `log4j-customLevelsOverride.xml` and `log4j-customLevelsWithFilters.xml`. The `+5+` in T8's `+%5p+`
+  is a separate claim from the converter's identity, and it is settled separately in the section
+  immediately below.
+
+| `+%X{transactionId}+` / `+%X{aKey}+`
+| Both converters take a *single-key* branch that appends the value when the key is present and
+  appends nothing when it is absent. The bridge's `properties` converter and Log4j 2's `X` converter
+  are byte-identical along that branch. The distinction matters because Log4j 2's whole-map and
+  multiple-key branches would instead render `{}` on empty data -- but neither fixture uses a bare
+  `%X` or a multi-key form, so neither takes those branches. With the key unset, as in both captures,
+  both worlds render *the empty string*.
+|===
+
+=== The `+%5p+` width, and the two claims it needs
+
+The rewrite evidence above establishes that a width *survives* translation, because the capture group is
+re-emitted -- `+%5p+` becomes `+%5v1Level+`. It does *not* establish that the width is still *in* the
+translated pattern, and the two are different claims. Both are settled below, neither by guesswork and
+neither by an invented event:
+
+[WARNING]
+.A five-character level cannot see a five-character field
+====
+`DEBUG` is exactly five characters. So are `ERROR` and `FATAL`. Rendered through a five-character
+minimum field, a five-character level needs no padding, so its bytes are *identical* to those of the
+same level rendered through a bare `+%p+`.
+
+T8 is the only fixture here whose pattern carries a width, and its consumer's own emission is at
+`DEBUG`. The committed capture therefore *cannot* see the width: deleting the `+5+` from the translated
+pattern would leave `log4j12-perf.baseline.txt` byte for byte unchanged.
+====
+
+*Claim one -- the width is still in the translated pattern.* This is settled by observation, in the
+layout-pattern row of T8's effective-configuration table above: the 2.x column is read out of the
+migrated fixture's own `-Dlog4j2.debug` boot output and compared with the superseded pattern character
+for character, `+%5p+` included. A width that had been dropped in translation fails that row while
+rendering identical bytes, which is exactly the case the row exists to catch.
+
+*Claim two -- the width means the same thing in both generations.* This is settled by the independent
+cross-generation measurement below, which does not depend on any event this corpus replays.
+
+[NOTE]
+.Why no shorter-levelled event was added to close claim one by rendering instead
+====
+Adding an event at a four-character level would make the padding visible in the bytes, and it was
+rejected. The superseded generation rendered exactly what T8's consumer emitted, once, at `DEBUG`; a
+shorter-levelled line in this baseline would be a line *computed by this project* rather than one
+*recorded from the superseded generation*, and a baseline holding computed bytes can only confirm the
+reasoning that produced it. The sibling corpus holds the same rule on the same ground. Claim one is a
+question about the translated configuration, and it is answered with observed
+configuration evidence rather than with a fabricated capture.
+====
+
+==== The same level column, measured at every standard level
+
+T8's padding rule was measured independently of anything this corpus replays: T8's conversion pattern
+was rendered for T8's own logger
+and message through the *genuine Log4j 1.2.17 layout* and through Log4j 2's own `PatternLayout`, at
+every standard level, and the results byte-compared. The leading `+%d+` is dropped from the probe so
+that wall-clock skew between the two renders cannot defeat a byte comparison; every other token,
+including the `+%5p+` under test, is the fixture's own.
+
+[cols="1,2,2,1",options="header"]
+|===
+| Level | Genuine 1.2.17 level column | Log4j 2 level column | Identical
+
+| `FATAL` | `+FATAL+` | `+FATAL+` | yes
+| `ERROR` | `+ERROR+` | `+ERROR+` | yes
+| *`WARN`* | `+ WARN+` -- **one leading pad space** | `+ WARN+` | *yes*
+| *`INFO`* | `+ INFO+` -- **one leading pad space** | `+ INFO+` | *yes*
+| `DEBUG` | `+DEBUG+` | `+DEBUG+` | yes
+| `TRACE` | `+TRACE+` | `+TRACE+` | yes
+|===
+
+`WARN` and `INFO` are the only standard levels shorter than the field, and both right-align to width
+five with exactly one leading space, in *both* generations. The comparison was not confined to the level
+column: the whole rendered line was identical at every one of the six levels, double space before the
+`-` separator included.
+
+The unqualified `+%p+` of T9 and T10 was measured the same way, with their own logger and message, and
+it *pads in neither* generation -- `WARN` and `INFO` render as four characters on both sides, and every
+whole line is identical at all six levels, trailing space before the separator included. The two
+families' level columns are therefore genuinely different widths by design, and each is preserved as it
+stood.
+
+*Observed in the fixtures themselves:* `DEBUG` for T8 and `INFO` for T9 and T10, in the same columns as
+before the translation -- with the padding behaviour behind T8's column established by the measurement
+above instead of predicted from the rewrite map, and the presence of the width in the translated pattern
+established by the observed layout-pattern row rather than by a fabricated shorter-levelled capture.
+
+=== `%c{1}` renders the full simple logger name
+
+An all-digits option selects the abbreviator strategy documented as retaining a given number of parts
+counted from the end, with one part retained. The captures accordingly show `PerformanceComparison`
+and `RunLog4j1` in full, never a dot-abbreviated form.
+
+=== The whitespace that the empty single-key rendering produces
+
+This is the audit's most easily mistaken result, so it is stated explicitly. Because an absent
+single-key context value renders as the empty string:
+
+* *T8* renders `%c{1}`, a space, the empty string, a space, then `-`, producing *a double space
+  immediately before the `-` separator*.
+* *T9 and T10* render `]`, a space, the empty string, a space, then the message, producing *a double
+  space between `]` and the message*; and because their pattern ends `%m %n` with a real space, every
+  rendered line also carries a *significant trailing space* before the line separator.
+
+All three are correct, byte-identical behaviour. *Trimming, collapsing or right-stripping whitespace,
+in a fixture or in a baseline, is a defect,* and it is why the consuming test may not use `String.trim`
+or `String.strip` on the text it compares.
+
+=== Translations were made from the Log4j 1.x source, never from an in-repository Log4j 2 peer
+
+This prohibition earned its keep. `log4j-perf-test/src/main/resources/log4j2-perfloc.xml`, an
+independently authored Log4j 2 benchmark peer, uses `+%C{1.}+` where its Log4j 1.x counterpart uses
+`+%C{1}+`. Those select *different* abbreviation strategies and render differently, so copying the peer
+would have silently broken parity. Every translation here was therefore derived from the Log4j 1.x
+source text. In this directory `perf5AsyncApndNoLoc.xml`, `perf6AsyncApndLoc.xml`, `log4j2-perf.xml`
+and `perf-CountingNoOpAppender.xml` are all independently authored peers; none was copied from, and
+none was edited.
+
+=== Tokens confirmed absent
+
+No audit row is owed for any of the following, because none appears in T8, T9 or T10 and none was
+introduced: `%x` and any nested-diagnostic-context use, bare `%X`, `%properties`, `%v1Level`, `%r`,
+`%C`, `%M`, `%L`, any explicit throwable specifier, and the TTCC, Simple, HTML and XML layouts.
+Because no pattern names an explicit throwable specifier, a plain throwable converter is appended
+implicitly on *both Log4j 2 paths*: the bridge's layout builder constructs a Log4j 2 `PatternLayout`, so
+the bridged arm and the translated target share that converter. *Genuine Log4j 1.2.17 does not share it.*
+It renders `+%m+`, `+%n+` and any throwable through its own layout and appender code, so the
+shared-converter statement is a fact about the bridge alone -- never about the artefact the bridge
+approximates, which is the arm this corpus treats as authoritative.
+
+*None of that is measured here, and this section must not be read as measuring it.* No event in the
+script replayed against T8, T9 or T10 carries a throwable -- each committed baseline is a single rendered
+line with no exception line and no frames -- so *these three fixtures establish no throwable-rendering
+parity at all.* That evidence exists, but it lives in the sibling corpus, whose T4 is the only fixture
+that renders a throwable: its Rule 6 arbitration records the determination that `+%m%n+` takes the
+plain-converter case, and the observation that both generations rendered the throwable case at 270 bytes,
+ending with the same frame and the same single newline, with an empty diff against the baseline. Adding a
+throwable to *this* script would not extend that result; it would require a fresh baseline captured with
+the superseded generation on the classpath, which is not available here.
+
+== Record 4 -- Rule 6 arbitration outcomes
+
+Where the translation could reasonably have gone two ways, baseline observed output is the
+tie-breaker. Each open question is recorded below as a decision with its evidence. In every case the
+normalized diff came back empty, so none of these decisions was made to *rescue* a failing
+comparison; they were made to choose between alternatives the comparison could not distinguish, and
+the tie-break criterion was then "reproduce genuine Log4j 1.x rather than an approximation of it".
+Decision 4 is the one case where the rendered comparison was blind to the choice *and* the
+effective-configuration table was not: the render could not tell the two variants apart, so the
+tie-break fell to the observed effective configuration, which could.
+
+=== Decision 1 -- T8 omits `bufferedIo` entirely
+
+*Decision: omit the attribute.* The Log4j 1.x source declares no `BufferedIO` parameter, so there is no
+value to carry across; the open question was whether to state Log4j 1.x's default explicitly.
+
+. *Genuine Log4j 1.x was observed with buffered I/O off and an 8192-byte writer buffer.* Log4j 2's
+  default buffer size is also 8192 -- it is defined as an 8 KiB encoder byte-buffer -- so leaving
+  `bufferedIo` unset yields a live 8192-byte buffer, which is the same disposition.
+. *Writing `bufferedIo="false"` would be worse, and provably so.* A control run adding that attribute
+  to a copy of the fixture raised
+  `WARN The bufferSize is set to 8192 but bufferedIo is false: false`
+  and degraded the appender to per-event writes that Log4j 1.x never performed.
++
+[IMPORTANT]
+====
+The file appender carries *two distinct* guard warnings and they must not be conflated. The one above
+is the buffer-size-versus-buffering warning. The separate warning
+`+Locking and buffering are mutually exclusive. No buffering will occur for {}+`
+requires file locking to be switched on, which none of these fixtures does, and is *not* relevant
+here. Neither warning fires for any of the three fixtures as translated.
+====
+. *The baseline confirms the choice.* With the attribute omitted, T8's normalized diff is *empty*.
+  Buffering governs only *when* bytes reach the disk, never *what* is written, so the comparison could
+  not have distinguished the two spellings -- and the omitted form is the one that matches genuine
+  Log4j 1.x while emitting strictly fewer diagnostics.
+
+=== Decision 2 -- T9 and T10 state `immediateFlush="false"` although their source never does
+
+*This one is determined rather than arbitrated,* and it is the single most likely place for a faithful
+looking translation to change behaviour silently.
+
+Log4j 1.x *couples* buffering to flushing: its file-appender builder forces the flush flag off whenever
+buffered I/O is on, in effect `if (bufferedIo) { immediateFlush = false; }`, over declared defaults of
+append on, immediate flush on, buffered I/O off and an 8192-byte buffer. Log4j 2 does not couple them:
+its output-stream appender builder defaults buffered I/O *on*, the buffer to the 8 KiB encoder size,
+and immediate flush *on*, all independently.
+
+The coupling is observable, not inferred. Genuine Log4j 1.x reports `immediateFlush=false` for T9 and
+T10 even though neither source declares an `ImmediateFlush` parameter -- the value exists only because
+`BufferedIO=true` forced it. Log4j 2 will not make that inference, so the flush setting must be stated
+explicitly. *Omitting it would have turned a buffered configuration into one that flushes on every
+event* -- a change in the exact disposition a benchmark fixture exists to hold still.
+
+=== Decision 3 -- T10 states `blocking="true"` although it is also the Log4j 2 default
+
+*Decision: state it explicitly.* Two reasons, and one observation that has to be handled carefully.
+
+. *Genuine Log4j 1.x blocks by default.* Disassembling the published Log4j 1.2.17 artefact shows its
+  asynchronous appender's no-argument constructor storing *true* into its blocking field, alongside
+  128 for the buffer size and false for location capture. Genuine Log4j 1.x therefore applies
+  back-pressure when the queue fills, and `blocking="true"` reproduces that.
+. *The bridge does not.* Booting the unmodified Log4j 1.x fixture through the bridge shows the
+  asynchronous appender built with blocking *off*, because the bridge only overwrites its flag when
+  the source declares a `Blocking` parameter and this source declares none. That value is an artefact
+  of the bridge, not Log4j 1.x behaviour, and reproducing it would have been the wrong target.
+. *The baseline cannot arbitrate this attribute, which is why it is stated rather than left to a
+  default.* Blocking governs only what happens when the queue is *full* -- wait for space, or discard.
+  The queue holds 262144 events and the script emits one, so the full path is never taken; a control
+  run with `blocking="false"` produced a capture byte-identical to the committed baseline. Since the
+  comparison is blind to it, the conservative choice for a measurement instrument is to preserve
+  back-pressure and to make that visible to a reviewer. Discarding events would also breach the
+  requirement that nothing be added, removed or re-levelled.
+
+=== Decision 4 -- root additivity is the one row whose two observed values differ
+
+*Decision: add no attribute; record the difference and prove it inert.* Every one of T8, T9 and T10 carries
+`<Root level="debug">` and nothing more, exactly as the target design specifies and exactly as mute as the
+Log4j 1.x sources they translate. Log4j 1.x nevertheless reports the root's additivity as `true` while the
+translated fixtures report `false`, so this is the one row in this corpus whose two observed columns do not
+agree literally. Both the measurement that establishes the difference and the proof that it cannot matter
+are recorded here rather than asserted.
+
+. *What is observed.* Genuine Log4j 1.x reports the root logger's additivity as `true`. With no
+  `additivity` attribute declared, the boot trace shows it unset -- `additivity="null"` in the root builder
+  line -- and the built root object reports `false`. The mechanism is in Log4j 2 Core, not in these
+  fixtures, and it is a deliberate asymmetry verified in source rather than inferred: the root-logger
+  plugin builder declares the attribute as a *primitive* `boolean`
+  (`log4j-core/src/main/java/org/apache/logging/log4j/core/config/LoggerConfig.java` L950-951,
+  `@PluginBuilderAttribute private boolean additivity;`, handed to the root logger configuration unchanged
+  at L1147) and returns it unconverted, so an absent attribute resolves to `false`. The builder for a
+  *non-root* `<Logger>` declares the same attribute as a boxed `Boolean` (L112) and resolves an absent
+  value to `true` (L140, `return additivity == null || additivity;`), and the deprecated static root
+  factory likewise defaults it to `true` (L1172); only the root is affected. Omitting the attribute on a
+  `<Root>` element is therefore *not* the same silence it was in the superseded generation. This is how
+  every undeclared `<Root>` in the repository behaves, it is not a property of these translations, and no
+  amount of reasoning about the file text would have revealed it -- only booting the fixture did.
+. *Why the row is accepted rather than closed by an attribute.* The flag is *unreadable* here.
+  `LoggerConfig` consults additivity in exactly two places -- the ancestor walk that decides whether caller
+  location is required (L784) and the propagation step `if (additive && parent != null)` (L797) -- and both
+  are guarded by a parent. The root has no parent; the boot trace reports `parent=null`. Moreover all three
+  configurations declare *no logger other than the root*, so there is no additive propagation path in the
+  configuration at all: no child logger exists whose events could be duplicated or dropped, and a name with
+  no `<Logger>` of its own is served by the root logger configuration itself. A flag that is never read
+  cannot change behaviour, and that -- not the tidiness of the row -- is what discharges it.
+. *A control run proves the two variants are byte-identical.* Every fixture was replayed with the attribute
+  stated and again with it absent. The built root reports `true` under the first and `false` under the
+  second, and *every other observable is unchanged*: the raw captures are identical under the two variants
+  (T8 72 bytes over one line, T9 43 bytes, T10 43 bytes), every normalized diff between the two variants is
+  empty, and all three captures reproduce their committed baselines byte for byte. Booting with
+  `-Dlog4j2.debug` emits no `WARN`, `ERROR` or `FATAL` status line under either variant -- which also
+  confirms that `additivity` is a recognised attribute of the root element rather than something tolerated
+  in silence. The seven fixtures of the peer corpus were measured the same way with the same result, so the
+  two corpora are treated identically.
+. *Why the attribute is not stated to make the row agree literally.* Declaring `additivity="true"` on the
+  translated roots would close the row literally, and it is deliberately not declared, for a reason that
+  outranks the tidiness of the row: it would put an attribute in the translated file that has *no counterpart
+  in the file being translated*. The Log4j 1.x sources declare no additivity, and a corpus whose purpose is
+  to show that a translation adds nothing cannot itself add something. The comparison with `blocking="true"`
+  in Decision 3 does not rescue it, either -- that attribute states a Log4j 2 default in order to make a
+  *preserved behaviour* visible, whereas this one would state a value in order to make a *reported flag*
+  agree, and the flag is the one thing here with no behaviour to preserve.
+. *What a reviewer should take from the row.* All three naive readings of it are wrong. "`The flag differs,
+  therefore the migration changed additivity`" is wrong: nothing consults the flag. "`The default is true,
+  therefore there is nothing to check`" is wrong, and was the actual trap, because for the root logger that
+  default is *not* `true`. And "`state the attribute so the row agrees`" is wrong too, because it buys a
+  literal match with an invented attribute. The row stands as the corpus's one named exception, in the same
+  way the normalized `%L` token stands as its one tolerated rendered-output difference: declared, measured,
+  and bounded.
+
+=== A residual reference this module still carries
+
+One reference to the superseded selector key survives inside this module, outside the change's declared
+surface, and it is recorded here so that a reader who greps for the key is not left wondering.
+`src/test/resources/perf/runResponseTm.sh` -- a hand-run response-time script, not a build input and not
+invoked by any test, POM or workflow -- carries two *commented* lines naming T9 and T10 through
+`+-Dlog4j.configuration=+`, and a class-path string listing the superseded artefact's jar beside
+`+log4j-api-2.6-SNAPSHOT.jar+` and `+log4j-core-2.6-SNAPSHOT.jar+`. The file is *unchanged from the base
+commit*; it is the only tracked shell script in the repository naming that key; and every one of the
+lines in question is commented out, so nothing executes them.
+
+Two facts bound it. The key itself is now *dead* -- no tracked Java file outside the retained bridge
+module sets it -- so were those lines uncommented they would select nothing, exactly as they would have
+selected nothing had the file been "`updated`" without being re-tested. And the plan's closure sweep over
+non-POM surfaces enumerated `yml`, `yaml`, `toml`, `cfg`, `properties` and `json`, not `sh`, so this
+script was never inside the sweep it appears to contradict. Editing it would be a change with no finding
+behind it and no way to verify the result, since the script's stale jar versions show it has not been run
+against this reactor for many releases; it is therefore left exactly as it is, and disclosed.
+
+=== A note on the bridge as a reference point
+
+One further observation is recorded because it vindicates two of the decisions above and would
+otherwise look like an inconsistency. For T8, the bridge reports `immediateFlush=true` -- it does not
+honour the source's explicitly declared flush parameter, and capitalising that parameter's name does
+not change the outcome -- whereas genuine Log4j 1.x reports `false`. The bridge is therefore an
+*approximation* of Log4j 1.x in two of the places this corpus touches: T8's flush flag and T10's
+blocking flag. In both, the translated fixture matches *genuine* Log4j 1.x rather than the bridge, and
+in both the rendered output is identical regardless. That is the correct target: the migration is away
+from Log4j 1.x, not away from the bridge's rendition of it.

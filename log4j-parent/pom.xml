@@ -51,7 +51,10 @@
          Plugin version properties (in alphabetical order)
          ================================================= -->
     <asciidoctor-maven-plugin.version>2.2.4</asciidoctor-maven-plugin.version>
-    <docker-maven-plugin.version>0.46.0</docker-maven-plugin.version>
+    <!-- 0.48.1 or later is required: earlier releases read the legacy top-level `NetworkSettings` fields of the
+         container inspection response, which Docker Engine API 1.55 no longer emits, and fail the `docker:start` goal
+         with a `NullPointerException` before any integration test runs. -->
+    <docker-maven-plugin.version>0.48.1</docker-maven-plugin.version>
     <exam-maven-plugin.version>4.14.0</exam-maven-plugin.version>
     <maven-taglib-plugin.version>2.4</maven-taglib-plugin.version>
     <!-- `surefire.version` property used in `apache.org:apache`: -->
@@ -115,7 +118,6 @@
     <junit-pioneer.version>1.9.1</junit-pioneer.version>
     <kafka.version>3.9.1</kafka.version>
     <lightcouch.version>0.2.0</lightcouch.version>
-    <log4j.version>1.2.17</log4j.version>
     <log4j-transform.version>0.2.0</log4j-transform.version>
     <log4j2-cachefile-transformer.version>2.15.0</log4j2-cachefile-transformer.version>
     <log4j2-ecs-layout.version>1.7.0</log4j2-ecs-layout.version>
@@ -619,12 +621,6 @@
         <version>${lightcouch.version}</version>
       </dependency>
 
-      <dependency>
-        <groupId>log4j</groupId>
-        <artifactId>log4j</artifactId>
-        <version>${log4j.version}</version>
-      </dependency>
-
       <!-- Used for testing `JsonTemplateLayout`: -->
       <dependency>
         <groupId>co.elastic.logging</groupId>
@@ -1020,10 +1016,13 @@
                     <!-- JCL replacements -->
                     <exclude>org.slf4j:jcl-over-slf4j</exclude>
                     <exclude>org.springframework:spring-jcl</exclude>
+                    <!-- Log4j 1.x itself -->
+                    <exclude>log4j:log4j</exclude>
                     <!-- Log4j 1.x replacements -->
                     <exclude>org.slf4j:log4j-over-slf4j</exclude>
                     <exclude>ch.qos.reload4j:reload4j</exclude>
                     <!-- Bridges to Log4j 1.x -->
+                    <exclude>org.apache.logging.log4j:log4j-1.2-api</exclude>
                     <exclude>org.slf4j:slf4j-log4j12</exclude>
                     <exclude>org.slf4j:slf4j-reload4j</exclude>
                     <!-- PAX Logging just to be safe -->

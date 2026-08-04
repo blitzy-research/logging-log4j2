@@ -20,13 +20,16 @@ import java.io.File;
 import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Proxy;
+import java.net.URL;
 import java.util.concurrent.TimeUnit;
 import java.util.logging.FileHandler;
 import java.util.logging.Level;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
+import org.apache.logging.log4j.core.LoggerContext;
 import org.apache.logging.log4j.core.async.AsyncLoggerContext;
 import org.apache.logging.log4j.core.async.AsyncLoggerContextSelector;
+import org.apache.logging.log4j.core.config.Configurator;
 import org.apache.logging.log4j.core.util.Constants;
 import org.openjdk.jmh.annotations.Benchmark;
 import org.openjdk.jmh.annotations.BenchmarkMode;
@@ -44,8 +47,8 @@ import org.openjdk.jmh.annotations.Warmup;
 import org.slf4j.LoggerFactory;
 
 /**
- * Benchmarks Log4j 2, Log4j 1, Logback and JUL using the ERROR level which is enabled for this test.
- * The configuration for each writes to disk.
+ * Benchmarks Log4j 2 in two separately configured logger contexts, Logback and JUL using the ERROR level which is
+ * enabled for this test. The configuration for each writes to disk.
  */
 @State(Scope.Benchmark)
 @Threads(1)
@@ -57,8 +60,6 @@ public class FileAppenderThrowableBenchmark {
         // log4j2
         System.setProperty("log4j2.enableThreadlocals", "true");
         System.setProperty("log4j2.configurationFile", "log4j2-perf-file-throwable.xml");
-        // log4j 1.2
-        System.setProperty("log4j.configuration", "log4j12-perf-file-throwable.xml");
         // logback
         System.setProperty("logback.configurationFile", "logback-perf-file-throwable.xml");
     }
@@ -308,15 +309,52 @@ public class FileAppenderThrowableBenchmark {
             }
         },
         LOG4J1() {
-            org.apache.log4j.Logger logger;
+            org.apache.logging.log4j.Logger logger;
+            LoggerContext ctx;
 
             @Override
             void setUp() throws Exception {
-                logger = org.apache.log4j.Logger.getLogger(FileAppenderThrowableBenchmark.class);
+                // Configured through an isolated LoggerContext, not a global property: the Log4j 2 arm
+                // already owns `log4j2.configurationFile`, and a non-null URI here bypasses property lookup.
+                // The context is started into a local and only published once the arm is fully initialised,
+                // because JMH does not tear down an arm whose setup threw -- a context assigned before the
+                // failure would stay started for the remainder of the JVM's life.
+                final URL configLocation =
+                        FileAppenderThrowableBenchmark.class.getResource("/log4j12-perf-file-throwable.xml");
+                // A fixture that was renamed or left out of the artifact is reported by name here, rather than as a
+                // bare NullPointerException from the URI conversion below.
+                if (configLocation == null) {
+                    throw new IllegalStateException("missing configuration resource: /log4j12-perf-file-throwable.xml");
+                }
+                // That fixture declares shutdownHook="disable", and in this class the attribute is not cosmetic but
+                // the thing that keeps this arm from displacing its neighbours. Registering the hook makes
+                // LoggerContext.start() reach LogManager.getFactory(), which builds the process-global context
+                // factory and, permanently, the context selector it reads from Log4jContextSelector at that instant.
+                // Two arms above assign that property in their own setup and then require an AsyncLoggerContext, so a
+                // hook registered here would hand them the default selector instead and break an assertion this arm
+                // has no business reaching. Suppressing the hook is also what the superseded generation did: it
+                // installed none, relying on an explicit shutdown call, exactly as the teardown below does. Any
+                // fixture booted through a context of its own must therefore keep the attribute; the parity gates
+                // assert it for all of them.
+                final LoggerContext starting =
+                        new LoggerContext("FileAppenderThrowableBenchmarkLog4j1", null, configLocation.toURI());
+                boolean armReady = false;
+                try {
+                    starting.start();
+                    logger = starting.getLogger(FileAppenderThrowableBenchmark.class.getName());
+                    armReady = true;
+                } finally {
+                    if (!armReady) {
+                        Configurator.shutdown(starting);
+                    }
+                }
+                ctx = starting;
             }
 
             @Override
-            void tearDown() throws Exception {}
+            void tearDown() throws Exception {
+                Configurator.shutdown(ctx);
+            }
 
             @Override
             void log(final String message, final Throwable throwable) {
