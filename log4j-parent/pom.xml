@@ -51,7 +51,10 @@
          Plugin version properties (in alphabetical order)
          ================================================= -->
     <asciidoctor-maven-plugin.version>2.2.4</asciidoctor-maven-plugin.version>
-    <docker-maven-plugin.version>0.46.0</docker-maven-plugin.version>
+    <!-- 0.48.1 or later is required: earlier releases read the legacy top-level `NetworkSettings` fields of the
+         container inspection response, which Docker Engine API 1.55 no longer emits, and fail the `docker:start` goal
+         with a `NullPointerException` before any integration test runs. -->
+    <docker-maven-plugin.version>0.48.1</docker-maven-plugin.version>
     <exam-maven-plugin.version>4.14.0</exam-maven-plugin.version>
     <maven-taglib-plugin.version>2.4</maven-taglib-plugin.version>
     <!-- `surefire.version` property used in `apache.org:apache`: -->

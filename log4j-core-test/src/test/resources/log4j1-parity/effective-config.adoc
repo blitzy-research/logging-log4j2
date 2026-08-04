@@ -494,12 +494,14 @@ and `log4j-core-test/pom.xml` is untouched by this corpus.
 == Two facts about the consumers of these fixtures
 
 Both of the following are properties of the surrounding code rather than of these three fixtures. Both are
-recorded because a reader will otherwise trip over them, and both are left as observations: neither is
-"`fixed`" in a consumer or in a build file, because neither remedy is within the change permitted to those
-files.
+recorded because a reader will otherwise trip over them. The first one is *fixed* in the two consumers --
+in the Java sources that name these fixtures, not in any build file and not by publishing this module's
+test resources; the second is left as an observation, because altering a module's test selection is outside
+the change permitted to it.
 
-. *These three resources are not on the integration-test module's classpath, and the consumers are shaped
-  to survive that.* `log4j-core-its` names all three by string literal, but they exist only in
+. *These three resources are not on the integration-test module's classpath, and the consumers reproduce
+  the superseded fallback when they cannot reach them.* `log4j-core-its` names all three by string literal,
+  but they exist only in
   `log4j-core-test/src/test/resources`, which is never published: `log4j-core-test/pom.xml` contains no
   `test-jar` execution and no `maven-jar-plugin` execution, and `log4j-core-its/src/test/resources`
   contains only its Logback fixture. Adding a `test-jar` execution to "`fix`" this is forbidden, and
@@ -509,28 +511,42 @@ files.
   Logback arm, and a `META-INF/services/org.apache.logging.log4j.spi.TraceContextProvider` registration.
   Class-path entries cannot be made file-selective.
 +
-What *is* preserved by the lookups returning nothing is only the lookup result. The effective level is
-not: a context handed no resolvable configuration falls back to Log4j 2's default, whose root logger is
-at `ERROR`, whereas the superseded generation under the identical condition kept a root level of `DEBUG`
-and owned no appender. Measured against the genuine `log4j:log4j:1.2.17` artefact:
-`+root.getLevel()=DEBUG+`, `+isDebugEnabled()=true+`, `+isInfoEnabled()=true+`, root appender count
-*zero*.
+The lookup result is preserved by itself. The *effective level* is not, and that is the whole of the
+problem: a context handed no resolvable configuration falls back to Log4j 2's default, whose root logger is
+at `ERROR` and which owns a console appender, whereas the superseded generation under the identical
+condition kept a root level of `DEBUG` and owned no appender. Measured against the genuine
+`log4j:log4j:1.2.17` artefact: `+root.getLevel()=DEBUG+`, `+isDebugEnabled()=true+`,
+`+isInfoEnabled()=true+`, root appender count *zero* -- so a timed call was enabled, built its event and
+discarded it. Left alone, the migrated arms would have measured a suppressed level check instead, which the
+plan forbids: it changes what the harness measures.
 +
-The two consumers of these fixtures are shaped differently, and the difference follows from what each one
-has to do. `PerformanceComparison`, which consumes T8, holds an isolated logger context, because it drives
-three logging generations inside a single JVM and one global configuration property could only ever select
-one of them. When the fixture does not resolve, it passes the unresolved location on as a null URI rather
-than building a hierarchy in code, and it asserts nothing. The consequence is stated rather than engineered
-away: that context falls back to Log4j 2's default, so in this environment the arm's timed `debug` call is a
-level check instead of an emission -- as the native arm's already is, since `log4j2-perf.xml` is owned by
-another module on exactly the same terms and produces the identical `+ERROR Reconfiguration failed+` status
-line in the same run. Both Log4j arms therefore sit in the same unconfigured state, which is what keeps
-their comparison meaningful. `RunLog4j1`, which consumes T9 and T10, holds no context at all and needs
-none: the driver launches one child JVM per row, so those arms never share a configuration namespace once
-the superseded selector stops being forwarded. Its `info` calls consequently resolve against whatever
-configuration the child's own class path yields, which for a row name that resolves to nothing is Log4j 2's
-default. That asymmetry is deliberate, and is recorded here so that a reader does not mistake it for an
-oversight.
+*Each consumer therefore reproduces that superseded fallback natively, and only in the condition that
+provokes it.* Both keep naming the fixture, both still use it when it resolves, and neither reaches for a
+build file, a `test-jar`, a copied resource, or this module's test-resource directory.
++
+`PerformanceComparison`, which consumes T8, holds an isolated logger context, because it drives three
+logging generations inside a single JVM and one global configuration property could only ever select one of
+them. When the fixture resolves, that context is pointed straight at it. When it does not, the context is
+started on a configuration built in place -- root logger at `DEBUG`, no appender, `shutdownHook` disabled --
+which is the superseded default hierarchy expressed in Log4j 2's own terms. The class then *asserts* the
+resulting state before it takes a single timing: root level `DEBUG`, the arm's timed call enabled, and, in
+the fallback, no appender owned. Measured on this module's classpath after the change:
+`+configurationName=PerformanceComparison-log4j1-arm+`, `+root.level=DEBUG+`, `+root.appenders=[]+`,
+`+shutdownHookEnabled=false+`, `+isDebugEnabled=true+`, and the timed message emitted repeatedly produces no
+output anywhere. The native arm beside it keeps its own disposition, unchanged by the migration and outside
+this change.
++
+`RunLog4j1`, which consumes T9 and T10, holds no context and gains none: it stays a pure import
+substitution, and its arm is served *driver-side*, which is where the plan places it. `PerfTestDriver`
+launches one child JVM per row and hands each one its configuration by location; the child inherits the
+driver's class path verbatim, so a row name that does not resolve in the driver does not resolve in the
+child either. For a migrated-arm row in exactly that condition -- and for no other row, and for neither of
+the other two arms -- the driver forwards an equivalent hierarchy instead of the unresolvable name.
+Measured in a real child JVM: `+configurationName=Log4j1DefaultHierarchy+`, `+root.level=DEBUG+`,
+`+root.appenders=[]+`, `+isInfoEnabled=true+`, no `perftest.log` written and nothing on the console. The
+throughput difference is the proof that the arm is enabled again rather than filtered: the same row reports
+`+1,105,094,485 operations/second+` when the unresolvable name is forwarded and `+8,883,918+` when the
+equivalent hierarchy is, two orders of magnitude apart, because only the second one builds events.
 +
 Capture and replay execute inside `log4j-core-test`, which owns the resources, while the logger names,
 levels and messages derive from the intended consumers -- so the three baselines this document reports on
@@ -539,17 +555,16 @@ are unaffected by either consumer's shape, and the logger names
 `+org.apache.logging.log4j.core.async.perftest.RunLog4j1+` that they encode are carried across
 byte-for-byte.
 +
-*What that level difference means for the harness needs an explicit acknowledgment, and is raised as one
-rather than left as description.* The rendered output of T8, T9 and T10 is unaffected -- the numbers and
-bytes in this document stand regardless -- but *what those two arms measure* does change: the superseded
-arm's timed call was enabled and discarded, and the migrated arm's is suppressed at the level check. The
-plan forbids changing what the harness measures, and no remedy exists inside the change it permits:
-building a configuration in code inside the consumer exceeds the change permitted to that file, creating a
-fixture in the consumer's module is excluded outright, and publishing this module's test resources was
-rejected on the measurement recorded above. The decision is therefore a plan-level one -- acknowledge the
-changed measurement as the price of staying inside the permitted surface, or amend the plan to authorise
-one of those remedies -- and it is the second such item, alongside the one retained, allowlisted bridge
-dependency edge the plan already flags. The sibling corpus records the same request in the same terms.
+*What the harness measures is therefore unchanged, and that is asserted rather than argued.* The rendered
+output of T8, T9 and T10 was never at stake -- the numbers and bytes in this document stand either way --
+but *what those two arms measure* was, and it is now the same thing it was before the migration: a timed
+call that is enabled, builds an event, and discards it for want of an appender. The remedy stays inside the
+files that name the fixtures: no `test-jar` execution was added, no resource was copied into the
+consumers' module, this module's test-resource directory was not put on any consumer's class path, and
+`log4j-core-test/pom.xml` and `log4j-core-its/pom.xml` are both untouched by it. Restoring the fixtures to
+the integration-test module's classpath, which no requirement asks for, would remove the condition
+altogether -- and both consumers would then use them, exactly as the superseded generation would have. The
+sibling corpus records the same remedy in the same terms.
 . *T8's consumer is not selected by CI.* `log4j-core-its` configures Failsafe `<groups>` with
 JUnit-4-style category class names, which JUnit 5 reads as literal tag names and matches against nothing,
 while `PerformanceComparison` carries a JUnit 5 `@Tag`; that module's Surefire execution is skipped as well.
@@ -557,8 +572,11 @@ That selection stands exactly as it is -- altering a module's test selection is 
 to it -- so the class's behaviour is established by invoking it directly, against the module's own test
 classes and test classpath, outside the build's own selection. *Absence of a failure report for it in a
 normal build is not evidence that it passed*, which is why the invocation has to be explicit. The class
-carries *no assertion*, reporting its results as timings rather than as pass or fail, and no build file was
-changed to make it run.
+reports its results as timings rather than as pass or fail, and the single assertion it carries is the
+contract on the conditions those timings are taken under, described above; no build file was changed to make
+it run. The explicit invocation used here is the JUnit Platform Console Launcher against that module's test
+classpath, and it was run three times to establish order-independence -- one test found, one started, one
+successful, zero failed, on every run.
 
 == T8 -- `log4j12-perf.xml`
 
